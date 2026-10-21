@@ -302,6 +302,39 @@ func TestExecutionFlowHappyPath(t *testing.T) {
 	}
 }
 
+// TestExecutionFlowWithoutTasks: the goal handoff holder (the visible
+// "executor") may skip task declaration entirely. After the plan is accepted it
+// requests the goal review with zero tasks, and the flow reaches completion.
+func TestExecutionFlowWithoutTasks(t *testing.T) {
+	f := newFlowFixture(t)
+	goal := f.newGoal("no tasks declared")
+
+	f.throughPlan("gh-1", goal.ID)
+	// The task-create handoff the daemon generated stays unreceived.
+	f.taskCreateHandoffID(goal.ID)
+
+	f.goalReviewRequestToCommander("gh-1", goal.ID)
+
+	tasks, err := f.store.ListTasks(f.ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("tasks = %d, want 0", len(tasks))
+	}
+
+	decision := f.requestHumanReview(goal.ID)
+	if _, err := f.store.ApproveGoalReview(f.ctx, decision.ID); err != nil {
+		t.Fatalf("ApproveGoalReview: %v", err)
+	}
+	f.call("goal.review.complete", goalReviewCompleteParams{
+		GoalID: goal.ID, AgentSessionID: f.commanderID,
+	})
+	if got := f.goal(goal.ID).Status; got != domain.GoalDone {
+		t.Fatalf("goal status = %q, want %q", got, domain.GoalDone)
+	}
+}
+
 // TestExecutionFlowPlanRejectReusesHandoff covers C5 → S3R → S3: a rejected
 // plan is corrected and re-reviewed on the same handoff, never a new one.
 func TestExecutionFlowPlanRejectReusesHandoff(t *testing.T) {

@@ -429,6 +429,8 @@ type commanderRole struct {
 	Matches      *bool    `json:"matches,omitempty"`
 }
 
+// subcommanderRole is the pre-2-layer response of a goal handoff holder; it is
+// still decoded so a newer shim works against an older daemon.
 type subcommanderRole struct {
 	Role         string   `json:"role"`
 	GoalID       int64    `json:"goal_id"`
@@ -439,6 +441,19 @@ type subcommanderRole struct {
 	Matches      *bool    `json:"matches,omitempty"`
 }
 
+// goalExecutorRole is the visible "executor": a session holding a goal handoff.
+type goalExecutorRole struct {
+	Role         string   `json:"role"`
+	GoalID       int64    `json:"goal_id"`
+	Does         []string `json:"does"`
+	DoesNot      []string `json:"does_not"`
+	UILocale     string   `json:"ui_locale,omitempty"`
+	ExpectedRole string   `json:"expected_role,omitempty"`
+	Matches      *bool    `json:"matches,omitempty"`
+}
+
+// executorRole carries every response without a goal: "task_worker", "none",
+// and the legacy "executor" of an older daemon.
 type executorRole struct {
 	Role         string   `json:"role"`
 	Does         []string `json:"does"`
@@ -454,6 +469,7 @@ type roleResponse interface {
 
 func (r commanderRole) roleName() string    { return r.Role }
 func (r subcommanderRole) roleName() string { return r.Role }
+func (r goalExecutorRole) roleName() string { return r.Role }
 func (r executorRole) roleName() string     { return r.Role }
 
 type Raw struct {
@@ -697,9 +713,24 @@ func decodeRoleResponse(raw json.RawMessage) (roleResponse, error) {
 		}
 		return response, nil
 	case "executor":
+		// goal_id tells the new executor (a goal handoff holder) from the legacy
+		// task-holding "executor" of an older daemon.
+		var goal goalExecutorRole
+		if err := json.Unmarshal(raw, &goal); err != nil {
+			return nil, fmt.Errorf("decode executor role: %w", err)
+		}
+		if goal.GoalID != 0 {
+			return goal, nil
+		}
 		var response executorRole
 		if err := json.Unmarshal(raw, &response); err != nil {
 			return nil, fmt.Errorf("decode executor role: %w", err)
+		}
+		return response, nil
+	case "task_worker", "none":
+		var response executorRole
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode %s role: %w", discriminator.Role, err)
 		}
 		return response, nil
 	default:
@@ -714,6 +745,10 @@ func setRoleExpectation(response roleResponse, expected string, matches bool) (r
 		response.Matches = &matches
 		return response, nil
 	case subcommanderRole:
+		response.ExpectedRole = expected
+		response.Matches = &matches
+		return response, nil
+	case goalExecutorRole:
 		response.ExpectedRole = expected
 		response.Matches = &matches
 		return response, nil
@@ -742,7 +777,7 @@ func callClaimWithRole(ctx context.Context, c *Client, method string, params any
 func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID int64) (*mcp.CallToolResult, Raw, error) {
 	expectedRole := strings.TrimSpace(in.ExpectedRole)
 	if expectedRole != "" && !validRole(expectedRole) {
-		return nil, Raw{}, fmt.Errorf("expected_role must be one of commander, subcommander, executor")
+		return nil, Raw{}, fmt.Errorf("expected_role must be one of commander, executor")
 	}
 
 	response, err := sessionRole(ctx, c, agentSessionID, true)
@@ -750,7 +785,7 @@ func callRole(ctx context.Context, c *Client, in RoleIn, agentSessionID int64) (
 		return nil, Raw{}, err
 	}
 	if expectedRole != "" {
-		response, err = setRoleExpectation(response, expectedRole, response.roleName() == expectedRole)
+		response, err = setRoleExpectation(response, expectedRole, roleMatches(response, expectedRole))
 		if err != nil {
 			return nil, Raw{}, err
 		}
@@ -796,9 +831,40 @@ func identifyHandoffReceiver(ctx context.Context, c *Client, sessionID *agentSes
 	return err
 }
 
+// roleMatches reports whether a role response satisfies an expected role.
+// "executor" means a goal handoff holder (goal_id != 0); it also accepts a
+// task_worker, so a worker started before the 2-layer change can re-check its
+// role after a context compaction. "subcommander" is the old name of a goal
+// handoff holder. "none" matches nothing, so a session that lost its handoff
+// does not pass a role check.
+func roleMatches(response roleResponse, expected string) bool {
+	switch expected {
+	case "commander":
+		_, ok := response.(commanderRole)
+		return ok
+	case "executor":
+		switch response.(type) {
+		case goalExecutorRole, subcommanderRole:
+			return true
+		case executorRole:
+			// A bare {"role":"executor"} without goal_id is an older daemon's
+			// task holder; it cannot be told from a session holding nothing.
+			return response.roleName() == "task_worker"
+		}
+	case "subcommander":
+		switch response.(type) {
+		case goalExecutorRole, subcommanderRole:
+			return true
+		}
+	case "task_worker":
+		return response.roleName() == "task_worker"
+	}
+	return false
+}
+
 func validRole(role string) bool {
 	switch role {
-	case "commander", "subcommander", "executor":
+	case "commander", "executor", "subcommander", "task_worker":
 		return true
 	default:
 		return false
@@ -892,7 +958,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[RoleIn, Raw](server, &mcp.Tool{
 		Name:         "atct_role",
-		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. An optional expected_role is reported as matches; a mismatch is returned as structured data. Write ATCT records in the language of the returned ui_locale (follow the atct skill).",
+		Description:  "Verify the current agent role and its project/goal claim evidence through the daemon. Roles: commander, executor (holds a goal handoff). A session that holds neither has no role. An optional expected_role (commander or executor) is reported as matches; a mismatch is returned as structured data. Write ATCT records in the language of the returned ui_locale (follow the atct skill).",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in RoleIn) (*mcp.CallToolResult, Raw, error) {
 		return callRole(ctx, c, in, sessionID.Get())
@@ -985,7 +1051,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[TaskCreateIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_create",
-		Description:  "Create the tasks a Goal decomposes into. Retrying the same idempotency_key does not create duplicates. Existing tasks are not updated and return with created: false; use atct_task_update_content to fix them.",
+		Description:  "Create tasks for a Goal. Retrying the same idempotency_key does not create duplicates. Existing tasks are not updated and return with created: false; use atct_task_update_content to fix them.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in TaskCreateIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{
@@ -1003,7 +1069,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 
 	addMCPTool[HandoffRequestIn, RawWithUnappliedDecisions](server, &mcp.Tool{
 		Name:         "atct_task_handoff_request",
-		Description:  "Request a task handoff using the canonical task-specific contract. request_report is the canonical request content the executor reads.",
+		Description:  "Request a task handoff using the canonical task-specific contract. request_report is the canonical request content.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in HandoffRequestIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		return callWithUnappliedDecisions(ctx, c, "task.handoff.request", map[string]any{
@@ -1324,7 +1390,7 @@ func Register(server *mcp.Server, c *Client, agentSessionID int64) {
 		Name: "atct_decision_ask",
 		Description: "Ask the human for a decision. An answer received within wait_ms is returned." +
 			"If parked is returned, continue with another task that does not depend on this decision. " +
-			"A subcommander cannot call this: it asks the commander through a goal handoff entry (atct_goal_handoff_entry_append), and the commander files the decision.",
+			"An executor cannot call this: it asks the commander through a goal handoff entry (atct_goal_handoff_entry_append), and the commander files the decision.",
 		OutputSchema: rawOutputSchemaWithUnappliedDecisions(),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DecisionAskIn) (*mcp.CallToolResult, RawWithUnappliedDecisions, error) {
 		params := map[string]any{

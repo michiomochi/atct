@@ -127,8 +127,8 @@ func TestRenderContextIncludesUnappliedDecisionsAndPollTool(t *testing.T) {
 	noTasks := renderContext([]contextGoal{{
 		Goal: domain.Goal{ID: 5, Content: "No tasks", Status: domain.GoalActive},
 	}}, nil)
-	if !strings.Contains(noTasks, "atct_task_create") || strings.Contains(noTasks, "atct_task_handoff_request") {
-		t.Fatalf("no-task state has wrong next tool: %q", noTasks)
+	if strings.Contains(noTasks, "atct_task_create") || strings.Contains(noTasks, "atct_task_handoff_request") || strings.Contains(noTasks, "Next tools") {
+		t.Fatalf("no-task state must not prompt task creation or delegation: %q", noTasks)
 	}
 	withTodo := renderContext([]contextGoal{{
 		Goal:  domain.Goal{ID: 6, Content: "Todo", Status: domain.GoalActive},
@@ -571,7 +571,7 @@ func TestContextCheckReturnsZeroForUnclaimedTask(t *testing.T) {
 	}
 }
 
-func TestContextCheckReturnsZeroForUndeclaredActiveGoal(t *testing.T) {
+func TestContextCheckReturnsZeroForActiveGoalNobodyHolds(t *testing.T) {
 	fixture := newContextCheckFixture(t)
 
 	_, exitCode, err := contextCommand(fixture.dir, fixture.cwd)
@@ -580,6 +580,37 @@ func TestContextCheckReturnsZeroForUndeclaredActiveGoal(t *testing.T) {
 	}
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+}
+
+func TestContextCheckReturnsOneForGoalHeldByExecutor(t *testing.T) {
+	fixture := newContextCheckFixture(t)
+	ctx := context.Background()
+	commander, err := fixture.db.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := fixture.db.ClaimProject(ctx, fixture.goal.ProjectID, commander); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	executor, err := fixture.db.RegisterAgentSession(ctx, os.Getpid())
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, err := fixture.db.RequestGoalHandoff(ctx, "h1", fixture.goal.ID, commander, "take it"); err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+
+	// Requested but not received: nobody holds the goal yet.
+	if _, exitCode, err := contextCommand(fixture.dir, fixture.cwd); err != nil || exitCode != 0 {
+		t.Fatalf("requested only: exit code = %d, err = %v, want 0", exitCode, err)
+	}
+
+	if _, err := fixture.db.ReceiveGoalHandoff(ctx, "h1", fixture.goal.ID, executor); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+	if _, exitCode, err := contextCommand(fixture.dir, fixture.cwd); err != nil || exitCode != 1 {
+		t.Fatalf("received: exit code = %d, err = %v, want 1", exitCode, err)
 	}
 }
 

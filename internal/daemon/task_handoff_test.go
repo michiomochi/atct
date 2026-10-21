@@ -292,8 +292,8 @@ func TestNamedTaskHandoffReviewRoutesReturnRoleEvidence(t *testing.T) {
 	if receivedData.ID != handoffID || receivedData.ReceivedBy != fixture.receiverID || receivedData.ReceivedAt == nil {
 		t.Fatalf("received data = %#v, want received task handoff", receivedData)
 	}
-	if received.Role != "executor" || received.ClaimEvidence.Scope != "task" || received.ClaimEvidence.TaskID != fixture.claimedTaskID || received.ClaimEvidence.HandoffID != handoffID || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
-		t.Fatalf("receive role/evidence = %+v, want executor task evidence", received)
+	if received.Role != "task_worker" || received.ClaimEvidence.Scope != "task" || received.ClaimEvidence.TaskID != fixture.claimedTaskID || received.ClaimEvidence.HandoffID != handoffID || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
+		t.Fatalf("receive role/evidence = %+v, want task_worker task evidence", received)
 	}
 
 	var reviewRequested store.TaskHandoff
@@ -361,8 +361,8 @@ func TestNamedTaskHandoffReviewRejectsAndRetriesWithSameWorker(t *testing.T) {
 	}, &received); err != nil {
 		t.Fatalf("task.handoff.receive: %v", err)
 	}
-	if received.Role != "executor" || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
-		t.Fatalf("task handoff receive = %+v, want executor evidence for receiver %d", received, fixture.receiverID)
+	if received.Role != "task_worker" || received.ClaimEvidence.AgentSessionID != fixture.receiverID {
+		t.Fatalf("task handoff receive = %+v, want task_worker evidence for receiver %d", received, fixture.receiverID)
 	}
 
 	var reviewRequested store.TaskHandoff
@@ -445,7 +445,7 @@ func TestNamedTaskHandoffReviewRejectsAndRetriesWithSameWorker(t *testing.T) {
 	}, &newTaskReceived); err != nil {
 		t.Fatalf("new task.handoff.receive: %v", err)
 	}
-	if newTaskReceived.Role != "executor" || newTaskReceived.ClaimEvidence.AgentSessionID != fixture.receiverID || newTaskReceived.ClaimEvidence.HandoffID == handoffID {
+	if newTaskReceived.Role != "task_worker" || newTaskReceived.ClaimEvidence.AgentSessionID != fixture.receiverID || newTaskReceived.ClaimEvidence.HandoffID == handoffID {
 		t.Fatalf("new task handoff receive = %+v, want the idle executor to reuse its new handoff", newTaskReceived)
 	}
 }

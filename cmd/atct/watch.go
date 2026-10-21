@@ -1911,16 +1911,15 @@ func watchTaskCreateHandoffEvent(handoff watchTaskCreateHandoff) (string, watchD
 	if !watchTaskCreateHandoffOpen(handoff) {
 		return "", watchDecision{}, false
 	}
+	// The goal executor does not take the daemon's task-create handoff: it
+	// creates no tasks. An unreceived one is therefore not announced; only a
+	// handoff somebody did receive still has an owner to wake.
+	if handoff.ReceivedAt == nil {
+		return "", watchDecision{}, false
+	}
 	decision := watchDecision{HandoffID: handoff.ID, GoalID: strconv.FormatInt(handoff.GoalID, 10), TargetRole: "subcommander"}
-	if handoff.ReceivedAt != nil {
-		decision.deliveryGeneration = *handoff.ReceivedAt
-		return "task.create_handoff.receive", decision, true
-	}
-	if handoff.RequestedAt != nil {
-		decision.deliveryGeneration = *handoff.RequestedAt
-		return "task.create_handoff.request", decision, true
-	}
-	return "", watchDecision{}, false
+	decision.deliveryGeneration = *handoff.ReceivedAt
+	return "task.create_handoff.receive", decision, true
 }
 
 func watchHandoffProjectionMatchesScope(decision watchDecision, scope watchScope) bool {
@@ -2202,7 +2201,7 @@ func formatWatchDecision(eventName string, decision watchDecision) (string, bool
 	case "wakeup.commits_missing":
 		return fmt.Sprintf("atct wakeup: goal %s has no linked commits", decision.GoalID), true
 	case "wakeup.undeclared_goal":
-		return fmt.Sprintf("atct wakeup: goal %s has no tasks declared", decision.GoalID), true
+		return fmt.Sprintf("atct wakeup: goal %s has no tasks (tasks are optional; nothing to declare)", decision.GoalID), true
 	case "wakeup.all_tasks_dropped":
 		return fmt.Sprintf("atct wakeup: goal %s has all tasks dropped", decision.GoalID), true
 	case "wakeup.unclaimed_doing":
@@ -2297,7 +2296,7 @@ func formatWatchCommanderTarget(target watchCommanderTarget) string {
 			return fmt.Sprintf("goal %s review was approved and is waiting to be completed", target.goalID) + blocked("open decisions still block completion")
 		}
 	case watchKindDecisionAnsweredUnapplied:
-		return fmt.Sprintf("decision %s (goal %s) was answered over 10 min ago and is still not applied; its asker may be gone. Check the goal's subcommander (atct:commander, \"answered decision unapplied\"). Do not apply the answer yourself",
+		return fmt.Sprintf("decision %s (goal %s) was answered over 10 min ago and is still not applied; its asker may be gone. Check the goal's executor (atct:commander, \"answered decision unapplied\"). Do not apply the answer yourself",
 			target.decisionID, target.goalID)
 	}
 	return fmt.Sprintf("%s handoff %s is waiting for your review (goal %s)", target.kind, target.handoffID, target.goalID)

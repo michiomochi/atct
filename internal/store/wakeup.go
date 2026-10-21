@@ -267,9 +267,10 @@ func (s *Store) EvaluateWakeup(ctx context.Context, projectID int64) (WakeupStat
 		}
 		taskHandoffs := make(map[int64][]TaskHandoff, len(tasks))
 		taskClaimed := make(map[int64]bool, len(tasks))
-		if len(tasks) == 0 {
-			state.UndeclaredGoals = append(state.UndeclaredGoals, goal)
-		} else {
+		// Tasks are optional: a goal with none is not an anomaly, so it is no
+		// longer listed in UndeclaredGoals (the field stays, always empty, until
+		// stage 3 removes it).
+		if len(tasks) > 0 {
 			for _, task := range tasks {
 				handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
 				if err != nil {

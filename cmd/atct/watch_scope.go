@@ -245,7 +245,8 @@ func watchTimestampAfter(a, b *string) bool {
 
 func watchSubcommanderLivenessActionable(scope watchScope, state watchReconciliation) bool {
 	for _, handoff := range state.TaskCreateHandoffs {
-		if watchTaskCreateHandoffMatchesGoal(scope, handoff) && watchTaskCreateHandoffOpen(handoff) {
+		// An unreceived task-create handoff is not the executor's work.
+		if handoff.ReceivedAt != nil && watchTaskCreateHandoffMatchesGoal(scope, handoff) && watchTaskCreateHandoffOpen(handoff) {
 			return true
 		}
 	}

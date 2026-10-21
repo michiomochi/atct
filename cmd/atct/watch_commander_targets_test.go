@@ -133,7 +133,7 @@ func TestCommanderLivenessNamesAnswerUnappliedPastTenMinutes(t *testing.T) {
 	}
 	state.Decisions[0].AnsweredAt = answered(11)
 	got := formatWatchLiveness(commanderScope(1), state)
-	want := "atct monitor liveness: decision 9 (goal 7) was answered over 10 min ago and is still not applied; its asker may be gone. Check the goal's subcommander (atct:commander, \"answered decision unapplied\"). Do not apply the answer yourself"
+	want := "atct monitor liveness: decision 9 (goal 7) was answered over 10 min ago and is still not applied; its asker may be gone. Check the goal's executor (atct:commander, \"answered decision unapplied\"). Do not apply the answer yourself"
 	if got != want {
 		t.Fatalf("liveness line = %q, want %q", got, want)
 	}
@@ -177,8 +177,8 @@ func TestCommanderLivenessAnswerUnappliedSharesGoalWithReviewAndSortsByID(t *tes
 	}
 	got := formatWatchLiveness(commanderScope(1), state)
 	want := "atct monitor liveness: goal 7 review received, human review not requested yet; " +
-		"decision 3 (goal 7) was answered over 10 min ago and is still not applied; its asker may be gone. Check the goal's subcommander (atct:commander, \"answered decision unapplied\"). Do not apply the answer yourself; " +
-		"decision 12 (goal 7) was answered over 10 min ago and is still not applied; its asker may be gone. Check the goal's subcommander (atct:commander, \"answered decision unapplied\"). Do not apply the answer yourself"
+		"decision 3 (goal 7) was answered over 10 min ago and is still not applied; its asker may be gone. Check the goal's executor (atct:commander, \"answered decision unapplied\"). Do not apply the answer yourself; " +
+		"decision 12 (goal 7) was answered over 10 min ago and is still not applied; its asker may be gone. Check the goal's executor (atct:commander, \"answered decision unapplied\"). Do not apply the answer yourself"
 	if got != want {
 		t.Fatalf("liveness line = %q, want %q", got, want)
 	}

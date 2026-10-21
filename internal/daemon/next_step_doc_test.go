@@ -59,6 +59,18 @@ func tableTools() map[string]bool {
 	return tools
 }
 
+// tableToolsInTheChart drops the task tools: next_step still guides a task
+// handoff that was already open, but the chart no longer draws that flow.
+func tableToolsInTheChart() map[string]bool {
+	tools := map[string]bool{}
+	for name := range tableTools() {
+		if !strings.HasPrefix(name, "atct_task_") {
+			tools[name] = true
+		}
+	}
+	return tools
+}
+
 func missing(from, in map[string]bool) []string {
 	var names []string
 	for name := range from {
@@ -77,7 +89,7 @@ func TestNextStepNamesEveryToolTheChartDoes(t *testing.T) {
 }
 
 func TestNextStepNamesNoToolOutsideTheChart(t *testing.T) {
-	if got := missing(tableTools(), chartTools(t)); len(got) > 0 {
+	if got := missing(tableToolsInTheChart(), chartTools(t)); len(got) > 0 {
 		t.Fatalf("next_step offers %v, which the chart does not name; one of the two is stale", got)
 	}
 }

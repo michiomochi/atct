@@ -31,7 +31,9 @@ func TestPendingCommandReturnsExitOneWithoutAnswers(t *testing.T) {
 	}
 }
 
-func TestPendingCommandReportsActiveGoalWithoutTasks(t *testing.T) {
+// Tasks are optional, so an active goal with no tasks is not a pending reason:
+// pending neither lists it nor tells the agent to call atct_task_create.
+func TestPendingCommandDoesNotPromptTaskCreationForGoalWithoutTasks(t *testing.T) {
 	dir, projectRoot := newPendingFixture(t)
 	s := openPendingStore(t, dir)
 	ctx := context.Background()
@@ -39,7 +41,7 @@ func TestPendingCommandReportsActiveGoalWithoutTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
-	goal, err := s.CreateGoal(ctx, project.ID, "Break this goal into tasks", "human")
+	goal, err := s.CreateGoal(ctx, project.ID, "Work without declaring tasks", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
 	}
@@ -47,21 +49,13 @@ func TestPendingCommandReportsActiveGoalWithoutTasks(t *testing.T) {
 		t.Fatalf("Store.Close: %v", err)
 	}
 
-	output, exitCode, err := pendingCommand(dir, projectRoot)
+	output, _, err := pendingCommand(dir, projectRoot)
 	if err != nil {
 		t.Fatalf("pendingCommand: %v", err)
 	}
-	if exitCode != 0 {
-		t.Fatalf("pendingCommand exit code = %d, want 0", exitCode)
-	}
-	for _, want := range []string{
-		"An active goal has no tasks.",
-		"Undeclared active goals:",
-		domain.Headline(goal.Content),
-		"goal_id: " + idText(goal.ID),
-	} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
+	for _, unwanted := range []string{"atct_task_create", "Undeclared active goals:", domain.Headline(goal.Content)} {
+		if strings.Contains(output, unwanted) {
+			t.Fatalf("pendingCommand output contains %q for a goal with no tasks: %q", unwanted, output)
 		}
 	}
 }
@@ -77,6 +71,15 @@ func TestPendingCommandKeepsMultilineGoalOnOneLine(t *testing.T) {
 	goal, err := s.CreateGoal(ctx, project.ID, "Break this goal into tasks\n\nDetails must stay out of pending output.", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal: %v", err)
+	}
+	// A goal whose tasks are all done is listed by headline (a goal with no
+	// tasks is not listed: tasks are optional).
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "multiline-goal", []string{"only task"}, []string{"Finish the only task."})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+	if _, err := s.UpdateTask(ctx, tasks[0].ID, domain.TaskDone, 0); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Store.Close: %v", err)
@@ -251,16 +254,16 @@ func TestPendingCommandIncludesAllPendingReasons(t *testing.T) {
 	for _, want := range []string{
 		"A human answered a decision you parked.",
 		pendingClaimReason,
-		"An active goal has no tasks.",
 		idText(decision.ID),
 		"unfinished claimed work",
 		idText(claimedTasks[0].ID),
-		domain.Headline(undeclaredGoal.Content),
-		idText(undeclaredGoal.ID),
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("pendingCommand output does not contain %q: %q", want, output)
 		}
+	}
+	if strings.Contains(output, domain.Headline(undeclaredGoal.Content)) {
+		t.Fatalf("pendingCommand listed the goal with no tasks: %q", output)
 	}
 }
 

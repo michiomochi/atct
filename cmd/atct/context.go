@@ -16,6 +16,9 @@ type contextGoal struct {
 	Goal         domain.Goal
 	Tasks        []domain.Task
 	TaskHandoffs map[int64]*store.TaskHandoff
+	// GoalHandoff is the goal's incomplete handoff, if any. A received one
+	// means an executor holds the goal.
+	GoalHandoff *store.GoalHandoff
 }
 
 type contextSnapshot struct {
@@ -161,6 +164,10 @@ func loadContextSnapshotForProject(dir, cwd, projectName string, projectSpecifie
 	if err != nil {
 		return contextSnapshot{}, fmt.Errorf("list goals: %w", err)
 	}
+	goalHandoffs, err := s.ListOpenGoalHandoffs(ctx)
+	if err != nil {
+		return contextSnapshot{}, fmt.Errorf("list open goal handoffs: %w", err)
+	}
 	active := make([]contextGoal, 0, len(goals))
 	activeIDs := make(map[int64]bool)
 	for _, goal := range goals {
@@ -175,7 +182,7 @@ func loadContextSnapshotForProject(dir, cwd, projectName string, projectSpecifie
 		if err != nil {
 			return contextSnapshot{}, fmt.Errorf("list open task handoffs for goal %d: %w", goal.ID, err)
 		}
-		active = append(active, contextGoal{Goal: goal, Tasks: tasks, TaskHandoffs: taskHandoffs})
+		active = append(active, contextGoal{Goal: goal, Tasks: tasks, TaskHandoffs: taskHandoffs, GoalHandoff: goalHandoffs[goal.ID]})
 		activeIDs[goal.ID] = true
 	}
 	if len(active) == 0 {
@@ -240,7 +247,8 @@ func contextNeedsWakeup(snapshot contextSnapshot) bool {
 		}
 	}
 	for _, item := range snapshot.goals {
-		if len(item.Tasks) == 0 {
+		// An executor never creates tasks, so a goal it holds stays at zero.
+		if len(item.Tasks) == 0 && (item.GoalHandoff == nil || item.GoalHandoff.ReceivedAt == nil) {
 			return true
 		}
 		for _, task := range item.Tasks {
@@ -339,7 +347,6 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 
 	var b strings.Builder
 	b.WriteString("ATCT context\n")
-	declareTasks := false
 	claimTasks := false
 	for _, item := range active {
 		fmt.Fprintf(&b, "Goal: %s\n", oneLine(domain.Headline(item.Goal.Content)))
@@ -361,8 +368,7 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 		}
 		switch {
 		case len(item.Tasks) == 0:
-			b.WriteString("- no tasks declared\n")
-			declareTasks = true
+			b.WriteString("- no tasks\n")
 		case listed == 0:
 			b.WriteString("- no todo or doing tasks\n")
 		}
@@ -387,9 +393,6 @@ func renderContextLegacy(goals []contextGoal, decisions []domain.Decision) strin
 	}
 
 	nextTools := make([]string, 0, 3)
-	if declareTasks {
-		nextTools = append(nextTools, "atct_task_create")
-	}
 	if claimTasks {
 		nextTools = append(nextTools, "atct_task_handoff_request")
 	}
@@ -437,11 +440,7 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 	}
 
 	hasTodo := false
-	hasNoTasks := false
 	for _, item := range active {
-		if len(item.Tasks) == 0 {
-			hasNoTasks = true
-		}
 		for _, task := range item.Tasks {
 			if contextTaskIsUnowned(task, item.TaskHandoffs[task.ID]) {
 				hasTodo = true
@@ -479,7 +478,7 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 			fmt.Fprintf(&b, "- [%s] %s (task_id: %d)\n", status, oneLine(task.Title), task.ID)
 		}
 		if len(item.Tasks) == 0 {
-			b.WriteString("- no tasks declared\n")
+			b.WriteString("- no tasks\n")
 		} else if len(actionable) == 0 {
 			b.WriteString("- no todo or doing tasks\n")
 		}
@@ -506,9 +505,6 @@ func renderContextForAgentSession(goals []contextGoal, decisions []domain.Decisi
 	}
 
 	nextTools := make([]string, 0, 3)
-	if hasNoTasks {
-		nextTools = append(nextTools, "atct_task_create")
-	}
 	if hasTodo {
 		nextTools = append(nextTools, "atct_task_handoff_request")
 	}

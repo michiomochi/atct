@@ -686,9 +686,11 @@ func TestMonitorBindingLifecycleMatchesDaemonAssignments(t *testing.T) {
 	if err := json.Unmarshal(identifyResult, &identified); err != nil {
 		t.Fatal(err)
 	}
+	// identify echoes the visible role name: an internal executor that holds
+	// nothing is "none"; the binding keeps the internal name.
 	want := store.MonitorAssignment{Role: "executor"}
-	if !reflect.DeepEqual(identified.Assignment, want) {
-		t.Fatalf("identify assignment = %+v, want %+v", identified.Assignment, want)
+	if wantVisible := (store.MonitorAssignment{Role: "none"}); !reflect.DeepEqual(identified.Assignment, wantVisible) {
+		t.Fatalf("identify assignment = %+v, want %+v", identified.Assignment, wantVisible)
 	}
 	assertAssignment(want)
 

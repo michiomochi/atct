@@ -49,22 +49,19 @@ assert_empty_file() {
 # is part of the entry: a heading checked against the wrong skill finds nothing
 # and the section silently stops being checked at all.
 ORDERED_SECTIONS=(
-  'atct|## Declare before you work'
+  'atct|## Work after the plan is accepted'
   'atct|## Handoff review order'
-  'subcommander|## Delegate a task'
-  'subcommander|### Two-layer delegation'
   'commander|## Delegate a goal'
   'atct|## Fill in a report on a handoff that is already closed'
   'atct|## Recover when your role comes back wrong'
-  'subcommander|## Close a task the moment it is finished'
 )
 
 # Every skill whose numbered lists are checked for contiguity.
-NUMBERED_SKILLS=(atct start commander subcommander executor)
+NUMBERED_SKILLS=(atct start commander executor)
 
 # Skills whose numbered sections must also name the cost of running out of
 # order. `start` is not one: it never carried the marker.
-ORDERED_SECTION_SKILLS=(atct commander subcommander executor)
+ORDERED_SECTION_SKILLS=(atct commander executor)
 
 # Prints one line per broken numbered list, and nothing when every list is
 # sound. Sections are split on `## ` and `### `; within a section the body
@@ -721,7 +718,7 @@ test_goal_handoff_watch_contract_has_required_order() {
   lineno() { delegate_goal_section | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
   role="$(lineno 'Then invoke the `atct_role` MCP tool with `expected_role` set to')"
 	watch="$(lineno 'Then, in Claude Code only, attach `atct watch --monitor --token')"
-  fin="$(lineno 'When all task handoffs are accepted, record the goal review request by calling')"
+  fin="$(lineno 'When the work is done and verified, record the goal review request by calling')"
 
   [[ -n "$role" && -n "$watch" && -n "$fin" ]] ||
     fail 'goal handoff watch order requires role, watch, and review-request paragraphs'
@@ -735,7 +732,7 @@ test_goal_handoff_forbids_upward_design_questions() {
 }
 
 test_goal_handoff_names_the_single_upward_message() {
-  delegate_goal_section_contains 'into the record instead: a task for work in flight, `surprises` and'
+  delegate_goal_section_contains 'into the record instead: `surprises` and'
   delegate_goal_section_contains '`needs_review` for what you found, and `next_goal_ids` for the goals that'
 
   local section
@@ -744,7 +741,7 @@ test_goal_handoff_names_the_single_upward_message() {
     fail 'unsent report section must name the single upward review message'
 }
 
-test_goal_handoff_forbids_the_subcommander_decision_ask() {
+test_goal_handoff_forbids_the_executor_decision_ask() {
   delegate_goal_section_contains 'should follow. You cannot call `atct_decision_ask`: the commander files a'
   delegate_goal_section_contains 'decision for the human, not you. For anything that needs the human, append a'
 }
@@ -752,7 +749,7 @@ test_goal_handoff_forbids_the_subcommander_decision_ask() {
 test_goal_handoff_routes_decisions_through_a_request_entry() {
   delegate_goal_section_contains '`review_requested` entry to your goal handoff with'
   delegate_goal_section_contains '`atct_goal_handoff_entry_append`, in the format `atct:atct` gives under'
-  delegate_goal_section_contains "\`### A subcommander's decision request\`."
+  delegate_goal_section_contains "\`### An executor's decision request\`."
 }
 
 test_goal_handoff_routes_cross_goal_facts_through_the_request_entry() {
@@ -771,7 +768,7 @@ test_goal_handoff_silence_has_required_order() {
   lineno() { delegate_goal_section | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
 	watch="$(lineno 'Then, in Claude Code only, attach `atct watch --monitor --token')"
   silence="$(lineno "Decide this goal's design yourself. Do not bring the delegator a design")"
-  fin="$(lineno 'When all task handoffs are accepted, record the goal review request by calling')"
+  fin="$(lineno 'When the work is done and verified, record the goal review request by calling')"
 
   [[ -n "$watch" && -n "$silence" && -n "$fin" ]] ||
     fail 'goal handoff silence order requires watch, silence, and review-request paragraphs'
@@ -788,41 +785,42 @@ test_goal_handoff_preamble_does_not_invite_upward_reports() {
 
 test_goal_delegation_requires_the_adjacent_goal_boundary() {
   delegate_goal_section_contains 'Name in the request every adjacent goal that touches the same files and say'
-  delegate_goal_section_contains 'goals, and a boundary left unstated becomes a question the subcommander'
+  delegate_goal_section_contains 'goals, and a boundary left unstated becomes a question the executor'
 }
 
 test_goal_delegation_keeps_the_delegator_out_until_completion() {
-  delegate_goal_section_contains '6. Stay out until the completion report. After waking the subcommander, the'
-  delegate_goal_section_contains 'arrive from `atct watch` rather than from the subcommander: a goal with no'
+  delegate_goal_section_contains '6. Stay out until the completion report. After waking the executor, the'
+  delegate_goal_section_contains 'arrive from `atct watch` rather than from the executor: a goal whose tasks'
+  delegate_goal_section_contains 'creates no tasks raises none of them. For such a goal, check its branch'
   delegate_goal_section_contains '`atct_goal_handoff_review_request` lands; that report is the entry point.'
 }
 
 test_delegator_answers_are_balanced() {
   local section
   local delegator_heading
-  local subcommander_heading
+  local executor_heading
   local delegator_count
-  local subcommander_count
+  local executor_count
 
   section="$(delegator_answers_section)"
   delegator_heading="$(grep -n -F -- 'Four kinds of question belong to the delegator' <<<"$section" | head -1 | cut -d: -f1)"
-  subcommander_heading="$(grep -n -F -- 'Four kinds look similar and belong to the subcommander' <<<"$section" | head -1 | cut -d: -f1)"
+  executor_heading="$(grep -n -F -- 'Four kinds look similar and belong to the executor' <<<"$section" | head -1 | cut -d: -f1)"
 
-  [[ -n "$delegator_heading" && -n "$subcommander_heading" ]] ||
+  [[ -n "$delegator_heading" && -n "$executor_heading" ]] ||
     fail 'delegator answer balance requires both question headings'
 
-  delegator_count="$(awk -v start="$delegator_heading" -v end="$subcommander_heading" '
+  delegator_count="$(awk -v start="$delegator_heading" -v end="$executor_heading" '
     NR > start && NR < end && /^- / { count++ }
     END { print count + 0 }
   ' <<<"$section")"
-  subcommander_count="$(awk -v start="$subcommander_heading" '
+  executor_count="$(awk -v start="$executor_heading" '
     NR > start && /^- / { count++ }
     END { print count + 0 }
   ' <<<"$section")"
 
   assert_eq '4' "$delegator_count" 'delegator answers must list four question kinds'
-  assert_eq '4' "$subcommander_count" 'subcommander answers must list four question kinds'
-  assert_eq "$delegator_count" "$subcommander_count" 'delegator and subcommander question counts must match'
+  assert_eq '4' "$executor_count" 'executor answers must list four question kinds'
+  assert_eq "$delegator_count" "$executor_count" 'delegator and executor question counts must match'
 }
 
 test_delegator_answers_names_the_wrong_answers_measurement() {
@@ -853,7 +851,7 @@ test_unsent_report_table_covers_every_spoken_kind() {
   done
 
   table_rows="$(awk '
-    /^\| What used to be spoken \| Where it goes \|$/ { in_table=1; next }
+    /^\| What you would report \| Where it goes \|$/ { in_table=1; next }
     in_table && /^\| / && /\|$/ { count++ }
     END { print count + 0 }
   ' <<<"$section")"
@@ -864,25 +862,13 @@ test_unsent_report_names_the_stall_detection() {
   local section
   section="$(unsent_report_section)"
 
-  grep -Fq -- "committed, each raises a Wakeup on the delegator's watch. On 2026-08-27 goal" <<<"$section" ||
+  grep -Fq -- "nothing committed, each raises a Wakeup on the" <<<"$section" ||
     fail 'unsent report section must name the stall detection'
-  grep -Fq -- '172 stalled with three tasks still `todo` and eight files uncommitted, and goal' <<<"$section" ||
-    fail 'unsent report section must name goal 172'
-  grep -Fq -- 'Wakeups had already fired; nobody had been told to read them.' <<<"$section" ||
-    fail 'unsent report section must name the missed detection read'
-}
-
-test_task_delegation_preamble_is_untouched_by_upward_silence() {
-  local task_section
-  task_section="$(sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
-
-  for needle in \
-    'Send the delegator nothing until the completion' \
-    'Stay out until the completion report' \
-    'Name in the request every adjacent goal'; do
-    if grep -Fq -- "$needle" <<<"$task_section"; then
-      fail "goal 181 owns the task delegation preamble: <$needle>"
-    fi
+  grep -Fq -- 'git log main..wt/goal-<id>' <<<"$section" ||
+    fail 'unsent report section must say how the commander checks a goal with no tasks'
+  for old in 'used to' 'old habit' '2026-08-27'; do
+    ! grep -Fq -- "$old" <<<"$section" ||
+      fail "unsent report section must not retell the old operation (<$old>)"
   done
 }
 
@@ -919,7 +905,7 @@ recovery_section_not_contains() {
 }
 
 test_recovery_section_has_role_entry() {
-  recovery_section_contains 'If `atct_role` returns `executor` while you still hold work that should be yours, stop working and read this section.'
+  recovery_section_contains 'If `atct_role` reports no role while you still hold work that should be yours, stop working and read this section.'
 }
 
 test_recovery_section_prioritizes_session_identify() {
@@ -931,77 +917,31 @@ test_recovery_section_has_project_path() {
 }
 
 test_recovery_section_has_goal_path() {
-  recovery_section_contains '- goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (legacy/out-of-order recovery; the commander must issue the handoff again)'
-  recovery_section_contains 'the subcommander cannot reissue it, and the goal waits on the'
+  recovery_section_contains '- goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)'
+  recovery_section_contains 'the executor cannot reissue it, and the goal waits on the'
 }
 
 test_recovery_section_has_task_path_and_non_repair_note() {
-  recovery_section_contains 'have the subcommander request a fresh `atct_task_handoff_request`'
+  recovery_section_not_contains '`atct_task_handoff_request`'
   recovery_section_contains 'Rejection is automatic, so the goal step above that asks the commander to reissue the handoff is needed only for the last trigger.'
 }
 
 test_handoff_completion_reports_are_explicit() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
-  local subcommander_skill="$REPO_ROOT/skills/subcommander/SKILL.md"
   local executor_skill="$REPO_ROOT/skills/executor/SKILL.md"
-  # goal 375 moved the executor's review-report contract out of the delegation
-  # template into the executor skill, and the reviewer's out of the quoted
-  # template into the close-a-task section. Each is checked where it now lives.
-  assert_file_contains 'calls `atct_task_handoff_complete` with the completion report' "$subcommander_skill"
+  # The executor's review-report contract lives in the executor skill: the goal
+  # review request report names the commands run, the checks it could not run
+  # and the changed paths.
   assert_file_contains 'with the `goal_id` provided in this request' "$commander_skill"
-  assert_file_contains 'Submit a review report stating the work, verification, unavailable checks,' "$executor_skill"
-  assert_file_contains 'and changed paths.' "$executor_skill"
-}
-
-test_task_delegation_verification_contract_is_explicit() {
-  local task_section
-  task_section="$(sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' "$REPO_ROOT/skills/subcommander/SKILL.md" | tr '\n' ' ' | tr -s ' ')"
-
-  grep -Fq -- 'verification commands the worker can run.' <<<"$task_section" ||
-    fail 'SKILL.md Delegate a task must require the delegator to name worker-runnable verification commands'
-  grep -Fq -- '`go test ./...` in the request.' <<<"$task_section" ||
-    fail 'SKILL.md Delegate a task must prohibit broad `go test ./...` requests'
-  grep -Eq -- 'worker sandbox.*delegator sandbox' <<<"$task_section" ||
-    fail 'SKILL.md Delegate a task must explain that worker and delegator sandboxes differ'
-  grep -Fq -- 'The delegator runs every verification not named for the worker and includes it in review.' <<<"$task_section" ||
-    fail 'SKILL.md Delegate a task must make the delegator run unnamed verification and include it in review'
-  grep -Fq -- 'It must say "could not run" in its completion report.' <<<"$task_section" ||
-    fail 'SKILL.md Delegate a task must require workers to report verification they could not run'
-  grep -Fq -- 'Do not use `--version` or `--help` to determine availability:' <<<"$task_section" ||
-    fail 'SKILL.md Delegate a task must prohibit using `--version` or `--help` to determine whether a worker can use a tool'
+  assert_file_contains 'every command you ran and its result, the checks you could not' "$executor_skill"
+  assert_file_contains 'run (say "could not run"), and the changed paths.' "$executor_skill"
 }
 
 test_handoff_report_repair_is_explicit() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   assert_file_contains '## Fill in a report on a handoff that is already closed' "$atct_skill"
-  assert_file_contains '`atct_task_handoff_report_amend` with the specific `handoff_id`' "$atct_skill"
+  assert_file_contains '`atct_goal_handoff_report_amend` with `handoff_id`, `goal_id`, and a' "$atct_skill"
   assert_file_contains 'It is not part of normal executor completion.' "$atct_skill"
-}
-
-test_handoff_completion_keeps_one_normal_path() {
-  local normal_section
-  local completion_step
-  normal_section="$(sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
-  completion_step="$(sed -n '/The task handoff review order is/,/^$/p' <<<"$normal_section")"
-  local close_section
-  close_section="$(sed -n '/^## Close a task the moment it is finished$/,$p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
-  ! grep -Fq -- 'atct_task_handoff_report_amend' <<<"$normal_section" || fail 'normal task completion must not name the repair tool'
-  grep -Fq -- '`atct_task_handoff_complete`' <<<"$completion_step" || fail 'task review order must name reviewer completion'
-  grep -Fq -- 'calls `atct_task_handoff_complete` with the completion report' <<<"$close_section" ||
-    fail 'task completion must require a completion report'
-}
-
-delegate_task_section() {
-  sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' \
-    "$REPO_ROOT/skills/subcommander/SKILL.md"
-}
-
-delegate_task_section_contains() {
-  local needle="$1"
-  local section
-  section="$(delegate_task_section)"
-  grep -Fq -- "$needle" <<<"$section" ||
-    fail "delegate task section does not contain <$needle>"
 }
 
 # The two checks below measure the lists themselves, not the surrounding
@@ -1009,115 +949,11 @@ delegate_task_section_contains() {
 # name and some forbidden ones also appear in the section's prose and quoted
 # blocks, so deleting a name from its list still found it elsewhere and passed.
 # Do not widen these back to `delegate_task_section`.
-delegate_task_allowlist_line() {
-  delegate_task_section |
-    sed -n '/An executor may call only these atct tools:/{n;p;}'
-}
-
-delegate_task_forbidden_block() {
-  delegate_task_section |
-    sed -n '/An executor must not call/,/Spell the names out/p'
-}
-
 # Names are matched with their backticks so a name can never match inside a
 # longer one: `atct_task_handoff_complete` would otherwise hit
 # `atct_goal_handoff_complete`, which sits on the opposite list.
-test_delegation_names_the_atct_tools_an_executor_may_call() {
-  local allowlist
-  local tool
-
-  delegate_task_section_contains 'An executor may call only these atct tools:'
-
-  # An empty extraction means the heading moved and every check below would
-  # pass vacuously. A check that always passes is the hole itself.
-  allowlist="$(delegate_task_allowlist_line)"
-  [[ -n "$allowlist" ]] ||
-    fail 'delegate task section has no allowlist line after `An executor may call only these atct tools:`'
-
-  for tool in atct_session_identify atct_task_handoff_receive atct_role \
-    atct_task_handoff_review_request atct_task_handoff_review_reject_receive; do
-    grep -Fq -- "\`$tool\`" <<<"$allowlist" ||
-      fail "the allowlist line does not allow <$tool>"
-  done
-
-  for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
-    atct_goal_handoff_request atct_goal_claim atct_goal_release \
-    atct_goal_complete atct_project_claim \
-    atct_project_release atct_task_handoff_request \
-    atct_task_handoff_review_receive atct_task_handoff_complete \
-    atct_task_handoff_review_reject atct_task_update \
-    atct_task_create atct_decision_ask; do
-    ! grep -Fq -- "\`$tool\`" <<<"$allowlist" ||
-      fail "the allowlist line must not allow the forbidden <$tool>"
-  done
-}
-
-test_delegation_names_the_atct_tools_an_executor_must_not_call() {
-  local forbidden
-  local tool
-
-  delegate_task_section_contains 'An executor must not call `atct_goal_handoff_complete`'
-
-  # Same reason as above: an empty block would let every name through.
-  forbidden="$(delegate_task_forbidden_block)"
-  [[ -n "$forbidden" ]] ||
-    fail 'delegate task section has no forbidden block from `An executor must not call` to `Spell the names out`'
-
-  for tool in atct_goal_handoff_complete atct_goal_handoff_receive \
-    atct_goal_handoff_request atct_goal_claim atct_goal_release \
-    atct_goal_complete atct_project_claim \
-    atct_project_release atct_task_handoff_request \
-    atct_task_handoff_review_receive atct_task_handoff_complete \
-    atct_task_handoff_review_reject atct_task_update \
-    atct_task_create atct_decision_ask; do
-    grep -Fq -- "\`$tool\`" <<<"$forbidden" ||
-      fail "the forbidden block does not forbid <$tool> by name"
-  done
-
-  for tool in atct_session_identify atct_task_handoff_receive atct_role \
-    atct_task_handoff_review_request; do
-    ! grep -Fq -- "\`$tool\`" <<<"$forbidden" ||
-      fail "the forbidden block must not forbid the allowed <$tool>"
-  done
-}
-
-test_delegation_template_sets_up_the_watch_between_receive_and_role() {
-  # goal 375: the template no longer spells out the watch. It orders receive →
-  # role → history and hands the watch to the executor skill, which sets it up
-  # between receive and role (test_executor_skill_sets_up_the_watch_between_receive_and_role).
-  local section receive_line role_line history_line executor_line
-
-  section="$(delegate_task_section)"
-  receive_line="$(grep -nF -- 'Record receipt by calling `atct_task_handoff_receive`' \
-    <<<"$section" | head -1 | cut -d: -f1 || true)"
-  role_line="$(grep -nF -- 'Then call `atct_role` with `expected_role` set' \
-    <<<"$section" | head -1 | cut -d: -f1 || true)"
-  history_line="$(grep -nF -- 'Then call `atct_handoff_entry_history`' \
-    <<<"$section" | head -1 | cut -d: -f1 || true)"
-  executor_line="$(grep -nF -- 'Then invoke the `atct:executor` skill' \
-    <<<"$section" | head -1 | cut -d: -f1 || true)"
-
-  [[ -n "$receive_line" && -n "$role_line" && -n "$history_line" && -n "$executor_line" ]] ||
-    fail "template must name receive, role check, history read, and the executor skill: receive=$receive_line role=$role_line history=$history_line executor=$executor_line"
-  (( receive_line < role_line && role_line < history_line && history_line < executor_line )) ||
-    fail "template must order receive, role check, history read, executor skill: receive=$receive_line role=$role_line history=$history_line executor=$executor_line"
-}
-
-test_delegation_template_references_the_watch_section_without_spelling_it_out() {
-  local section
-
-  delegate_task_section_contains 'the watch, the review request, and the rejection path'
-  section="$(delegate_task_section)"
-  ! grep -qF -- 'atct watch --monitor --token' <<<"$section" ||
-    fail 'delegate section must not spell out the watch command'
-  ! grep -qF -- 'persistent' <<<"$section" ||
-    fail 'delegate section must not mention persistent'
-}
-
-test_delegation_template_and_executor_skill_state_the_blocked_output() {
-  # goal 375: the blocked output is stated once, in the executor skill that the
-  # template tells the worker to follow.
-  delegate_task_section_contains 'Then invoke the `atct:executor` skill'
+test_executor_skill_states_the_blocked_output() {
+  # goal 375: the blocked output is stated once, in the executor skill.
   assert_file_contains 'blocked: no live Monitor' "$REPO_ROOT/skills/executor/SKILL.md"
 }
 
@@ -1125,7 +961,7 @@ test_executor_skill_sets_up_the_watch_between_receive_and_role() {
   local skill receive_line watch_line role_line
 
   skill="$REPO_ROOT/skills/executor/SKILL.md"
-  receive_line="$(grep -nF 'atct_task_handoff_receive`' "$skill" | head -1 | cut -d: -f1 || true)"
+  receive_line="$(grep -nF 'atct_goal_handoff_receive`' "$skill" | head -1 | cut -d: -f1 || true)"
   watch_line="$(grep -nF '## Watch' "$skill" | head -1 | cut -d: -f1 || true)"
   role_line="$(grep -nF 'atct_role` with `expected_role' "$skill" | head -1 | cut -d: -f1 || true)"
 
@@ -1134,35 +970,10 @@ test_executor_skill_sets_up_the_watch_between_receive_and_role() {
   (( receive_line < watch_line && watch_line < role_line )) ||
     fail "executor watch step must sit between receive and role check: receive=$receive_line watch=$watch_line role=$role_line"
   assert_file_not_contains 'persistent' "$skill"
-  assert_file_contains '`atct_task_handoff_review_reject_receive`' "$skill"
-}
-
-test_delegation_requests_review_before_reviewer_closes_the_task() {
-  local section
-  local request_line
-  local receive_line
-  local complete_line
-  local order
-
-  delegate_task_section_contains 'Report the review request before the reviewer closes the task'
-
-  section="$(delegate_task_section)"
-  # The order is stated on one line of tool names; compare their positions.
-  order="$(sed -n '/The task handoff review order is/,/^$/p' <<<"$section" | tr '\n' ' ' | tr -s ' ')"
-  request_line="${order%%atct_task_handoff_review_request*}"
-  receive_line="${order%%atct_task_handoff_review_receive*}"
-  complete_line="${order%%atct_task_handoff_complete*}"
-
-  [[ "$order" == *'atct_task_handoff_review_request'* ]] || fail 'delegate task section never says to request review'
-  [[ "$order" == *'atct_task_handoff_review_receive'* ]] || fail 'delegate task section never says the reviewer receives the review'
-  [[ "$order" == *'atct_task_handoff_complete'* ]] || fail 'delegate task section never says the reviewer completes the handoff'
-  request_line=${#request_line} receive_line=${#receive_line} complete_line=${#complete_line}
-  (( request_line < receive_line && receive_line < complete_line )) ||
-    fail "task review must be requested, received, and completed in order: request=$request_line receive=$receive_line complete=$complete_line"
 }
 
 test_recovery_section_explains_why_the_role_drops() {
-  recovery_section_contains "Closing a subcommander's goal handoff drops that subcommander to \`executor\`"
+  recovery_section_contains "Closing an executor's goal handoff takes that executor's role away"
 }
 
 test_orchestration_skill_has_no_blanket_atct_ban() {
@@ -1198,7 +1009,7 @@ test_goal_handoff_completion_keeps_one_normal_path() {
   local goal_section
   local completion_step
   goal_section="$(sed -n '/^## Delegate a goal$/,/^### Session keys$/p' "$REPO_ROOT/skills/commander/SKILL.md")"
-  completion_step="$(sed -n '/When all task handoffs are accepted, record the goal review request by calling/,/^$/p' <<<"$goal_section")"
+  completion_step="$(sed -n '/When the work is done and verified, record the goal review request by calling/,/^$/p' <<<"$goal_section")"
   ! grep -Fq -- 'atct_goal_handoff_report_amend' <<<"$goal_section" || fail 'normal goal completion must not name the repair tool'
   grep -Fq -- '`atct_goal_handoff_review_request`' <<<"$completion_step" || fail 'goal completion must start with a review request'
   grep -Fq -- 'the completion report while the handoff remains open' <<<"$goal_section" || fail 'goal review request must record the completion report while the handoff remains open'
@@ -1269,6 +1080,28 @@ test_one_workspace_per_goal_closes_on_approval() {
   assert_file_contains 'atct_goal_review_complete' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
+test_executor_uses_the_advisor_before_approach_and_review_request() {
+  local skill="$REPO_ROOT/skills/executor/SKILL.md"
+  assert_file_contains 'Use the advisor, when the advisor tool is available in your session' "$skill"
+  assert_file_contains 'before you settle a design or implementation' "$skill"
+  assert_file_contains 'again before you call `atct_goal_handoff_review_request`' "$skill"
+  assert_file_contains 'what you asked the advisor and what you changed because of it' "$skill"
+  assert_file_not_contains 'opus sub-agent' "$skill"
+}
+
+test_commander_keeps_the_advisor_enabled_and_the_independent_check() {
+  local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
+  assert_file_contains 'Start the executor'"'"'s session with the advisor available' "$commander_skill"
+  assert_file_contains 'do not disable the' "$commander_skill"
+  assert_file_contains 'advisor tool that the user'"'"'s own settings provide' "$commander_skill"
+  assert_file_contains 'The executor'"'"'s advisor strengthens the executor'"'"'s own checking' "$commander_skill"
+  assert_file_contains 'replace this independent check' "$commander_skill"
+  assert_file_contains 'Start an Agent with `model` set to `opus`' "$commander_skill"
+  # No model name or launch flag belongs in the skill.
+  assert_file_not_contains 'CLAUDE_CODE_DISABLE_ADVISOR_TOOL' "$commander_skill"
+  assert_file_not_contains 'advisorModel' "$commander_skill"
+}
+
 test_one_workspace_per_goal_forbids_reuse() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   assert_file_contains 'do not hand it a second goal' "$commander_skill"
@@ -1301,24 +1134,14 @@ test_delegated_claim_contract_is_explicit() {
   # 6979a33 moved the role-only sections out of the shared skill. The contract is
   # still stated once; it is stated in the skill of the role that has to follow it.
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
-  local subcommander_skill="$REPO_ROOT/skills/subcommander/SKILL.md"
 
-  assert_file_contains 'Hold the parent, not the task.' "$subcommander_skill"
   assert_file_contains 'Hold the parent, not the goal.' "$commander_skill"
-  assert_file_contains '## Delegate a task' "$subcommander_skill"
   assert_file_contains '## Delegate a goal' "$commander_skill"
-  assert_file_contains 'Record receipt by calling `atct_task_handoff_receive` with the `task_id` and' "$subcommander_skill"
   assert_file_contains 'Then record receipt of the goal handoff by calling' "$commander_skill"
-  assert_file_contains 'Every implementation task is delegated.' "$atct_skill"
-  assert_file_contains 'Delegating a task requires a received goal handoff, not a project claim.' "$subcommander_skill"
-  assert_file_contains 'For two-layer delegation, the commander calls `atct_goal_claim` to create a goal handoff addressed to itself.' "$subcommander_skill"
+  assert_file_contains 'The executor must receive its goal handoff before touching the work' "$atct_skill"
   assert_file_contains 'a received, uncompleted goal handoff' "$atct_skill"
-  assert_file_contains 'with `atct_task_handoff_receive` before starting it.' "$start_skill"
+  assert_file_contains '`atct_goal_handoff_receive` before starting it.' "$start_skill"
   assert_file_contains 'The loop coordinates delegated work.' "$start_skill"
-  assert_file_contains 'Record the handoff before waking the worker.' "$subcommander_skill"
-  assert_file_contains 'The delegator must call `atct_task_handoff_request`' "$subcommander_skill"
-  assert_file_contains '`handoff_id` above and the exact `session_key` from SessionStart (plus' "$subcommander_skill"
-  assert_file_contains '`monitor_token` when emitted).' "$subcommander_skill"
   assert_file_contains 'The delegator must call `atct_goal_handoff_request`' "$commander_skill"
   assert_file_contains 'with the `goal_id` provided in this request and the exact `session_key` from SessionStart.' "$commander_skill"
   assert_file_contains '`handoff_id` and `monitor_token` are optional' "$commander_skill"
@@ -1326,13 +1149,11 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_contains 'never pass `session_key` or `monitor_token`' "$commander_skill"
   assert_file_contains '`atct_goal_review_complete` with the `goal_id` provided in this request.' "$commander_skill"
   assert_file_not_contains '`atct_goal_review_complete` with the `goal_id` provided in this request and a `complete_report`' "$atct_skill"
-  assert_file_contains 'with the completion report' "$subcommander_skill"
   assert_file_contains 'Do this before starting work.' "$commander_skill"
-  assert_file_contains '`atct_task_handoff_review_request`' "$REPO_ROOT/skills/executor/SKILL.md"
-  assert_file_contains 'A subcommander must not claim the project' "$commander_skill"
-  assert_file_contains 'A subcommander must not call `atct_goal_release`' "$commander_skill"
+  assert_file_contains 'An executor must not claim the project' "$commander_skill"
+  assert_file_contains 'An executor must not call `atct_goal_release`' "$commander_skill"
   assert_file_contains "commander's job." "$commander_skill"
-  assert_file_contains 'The worker must perform both instructions itself before doing any work.' "$subcommander_skill"
+  assert_file_contains '`atct_goal_handoff_review_request`' "$REPO_ROOT/skills/executor/SKILL.md"
   assert_file_not_contains 'Call `atct_task_claim` before working on a task.' "$atct_skill"
   assert_file_not_contains 'A delegated worker must not claim the task; the delegator owns the claim.' "$atct_skill"
   assert_file_not_contains 'Do not call `atct_task_claim` for a delegated task.' "$atct_skill"
@@ -1356,21 +1177,6 @@ test_delegated_claim_contract_is_explicit() {
   assert_file_not_contains 'Do not pass a handoff ID or session; ATCT' "$atct_skill"
 }
 
-test_declared_task_content_fix_contract_is_explicit() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local task_section
-
-  task_section="$(sed -n '/^## Fix a declared task$/,/^## Receive before you start$/p' "$atct_skill")"
-  grep -Fq -- 'atct_task_update_content' <<<"$task_section" ||
-    fail 'declared task content fix section omits atct_task_update_content'
-  grep -Fq -- 'todo' <<<"$task_section" ||
-    fail 'declared task content fix section omits todo'
-  grep -Fq -- 'done' <<<"$task_section" ||
-    fail 'declared task content fix section omits done'
-  grep -Fq -- 'idempotency_key' <<<"$task_section" ||
-    fail 'declared task content fix section omits idempotency_key'
-}
-
 test_start_identifies_before_monitor() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
   local identify_line
@@ -1389,9 +1195,8 @@ test_start_session_key_contract_is_explicit() {
 
   assert_file_contains 'call `atct_session_identify`' "$start_skill"
   assert_file_contains '`session_key` and `monitor_token`' "$start_skill"
-  assert_file_contains 'atct_task_handoff_receive` with its `task_id`' "$start_skill"
-  assert_file_contains 'and `handoff_id`, using the exact' "$start_skill"
-  assert_file_contains 'using the exact `session_key` and optional `monitor_token` from' "$start_skill"
+  assert_file_contains 'atct_goal_handoff_receive` with its `goal_id`,' "$start_skill"
+  assert_file_contains 'using the exact `session_key` and optional `handoff_id` and `monitor_token` from' "$start_skill"
   assert_file_contains 'SessionStart → `atct_role`' "$start_skill"
   assert_file_not_contains 'handoff receipt with its `task_id` only' "$start_skill"
   assert_file_contains '<project>-<unit>-<role>' "$start_skill"
@@ -1410,37 +1215,31 @@ test_role_skills_are_routed_from_shared_atct() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local role
 
-  for role in commander subcommander executor; do
+  for role in commander executor; do
     assert_file_contains "name: $role" "$REPO_ROOT/skills/$role/SKILL.md"
     assert_file_contains "expected_role\` set to \`$role\`" "$REPO_ROOT/skills/$role/SKILL.md"
     assert_file_contains 'atct:atct' "$REPO_ROOT/skills/$role/SKILL.md"
     assert_file_contains "atct:$role" "$atct_skill"
   done
+  # atct:subcommander is only a pointer for delegation text written before the
+  # roles merged; it must send the reader to atct:executor and carry no procedure.
+  assert_file_contains 'name: subcommander' "$REPO_ROOT/skills/subcommander/SKILL.md"
+  assert_file_contains 'Use `atct:executor`.' "$REPO_ROOT/skills/subcommander/SKILL.md"
+  assert_file_not_contains 'atct_goal_handoff_receive' "$REPO_ROOT/skills/subcommander/SKILL.md"
 }
 
 test_role_entry_receives_with_credentials_before_role_check() {
   local skill receipt_line role_line
 
-  skill="$REPO_ROOT/skills/subcommander/SKILL.md"
+  skill="$REPO_ROOT/skills/executor/SKILL.md"
   assert_file_contains 'atct_goal_handoff_receive`' "$skill"
   assert_file_contains 'exact `session_key` from SessionStart' "$skill"
   assert_file_contains 'optional `handoff_id` and' "$skill"
   assert_file_contains '`monitor_token` may be included' "$skill"
   receipt_line="$(grep -nF 'atct_goal_handoff_receive`' "$skill" | head -1 | cut -d: -f1)"
   role_line="$(grep -nF 'atct_role` with `expected_role' "$skill" | head -1 | cut -d: -f1)"
-  [[ -n "$receipt_line" && -n "$role_line" ]] || fail 'subcommander entry must name receipt and role check'
-  (( receipt_line < role_line )) || fail 'subcommander must receive the goal handoff before checking its role'
-
-  skill="$REPO_ROOT/skills/executor/SKILL.md"
-  assert_file_contains 'atct_task_handoff_receive`' "$skill"
-  assert_file_contains 'the `task_id` and `handoff_id` provided' "$skill"
-  assert_file_contains 'exact `session_key` from SessionStart' "$skill"
-  assert_file_contains 'and optional' "$skill"
-  assert_file_contains '`monitor_token`' "$skill"
-  receipt_line="$(grep -nF 'atct_task_handoff_receive`' "$skill" | head -1 | cut -d: -f1)"
-  role_line="$(grep -nF 'atct_role` with `expected_role' "$skill" | head -1 | cut -d: -f1)"
   [[ -n "$receipt_line" && -n "$role_line" ]] || fail 'executor entry must name receipt and role check'
-  (( receipt_line < role_line )) || fail 'executor must receive the task handoff before checking its role'
+  (( receipt_line < role_line )) || fail 'executor must receive the goal handoff before checking its role'
 }
 
 test_atct_skill_requires_execution_flow() {
@@ -1508,9 +1307,9 @@ test_start_documents_liveness_authority_boundary() {
   local start_skill="$REPO_ROOT/skills/start/SKILL.md"
 
   assert_file_contains 'A one-minute liveness line means' "$start_skill"
-  assert_file_contains 'A subcommander accepts the plan first' "$start_skill"
-  assert_file_contains 'start the executor through `atct codex monitor -- <codex args>`' "$start_skill"
-  assert_file_contains 'submits the task for review; it does not commit' "$start_skill"
+  assert_file_contains 'An executor has its plan accepted first' "$start_skill"
+  assert_file_contains 'executor process through `atct codex monitor -- <codex args>`' "$start_skill"
+  assert_file_contains 'requests the goal review; it does not cross the' "$start_skill"
 }
 
 test_start_uses_monitor_watch_for_claude_actions() {
@@ -1530,66 +1329,6 @@ test_readme_documents_liveness_contract() {
   assert_file_contains 'independent one-minute' "$readme"
   assert_file_contains 'bounded `atct monitor liveness:` recheck line' "$readme"
   assert_file_contains 'A liveness line is a recheck signal, not authority' "$readme"
-}
-
-test_task_handoff_recreation_cause_is_documented() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local task_section
-
-  task_section="$(sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
-  grep -Fq -- 'Hold the parent, not the task.' <<<"$task_section" ||
-    fail 'task delegation section omits the parent-handoff requirement'
-  ! grep -Fq -- 'atct_task_claim' <<<"$task_section" ||
-    fail 'task delegation section retains the removed claim API'
-}
-
-test_task_handoff_recreation_uses_new_id() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local task_section
-
-  task_section="$(sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
-  grep -Fq -- 'new `handoff_id`' <<<"$task_section" ||
-    fail 'task delegation section omits new handoff_id recreation'
-}
-
-test_task_handoff_recreation_keeps_worker_identity() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local task_section
-
-  task_section="$(sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
-  grep -Fq -- 'does not mean a different worker' <<<"$task_section" ||
-    fail 'task delegation section changes worker identity for a follow-up'
-}
-
-test_task_handoff_uses_canonical_review_order() {
-  local section
-  local flow
-  section="$(delegate_task_section)"
-
-  for needle in \
-    'The delegator must call `atct_task_handoff_request`' \
-    '`atct_task_handoff_receive`' \
-    '`atct_task_handoff_review_request`' \
-    '`atct_task_handoff_review_receive`' \
-    '`atct_task_handoff_complete`' \
-    '`atct_task_handoff_review_reject`'; do
-    grep -Fq -- "$needle" <<<"$section" ||
-      fail "task delegation section omits canonical review tool <$needle>"
-  done
-
-  flow="$(sed -n '/The task handoff review order is/,/^$/p' <<<"$section" | tr '\n' ' ')"
-  [[ -n "$flow" ]] || fail 'task delegation section omits the task handoff review order'
-  [[ "$flow" == *'atct_task_handoff_request`'*'atct_task_handoff_receive`'* ]] ||
-    fail 'task handoff request must precede receive in the documented order'
-  [[ "$flow" == *'atct_task_handoff_receive`'*'atct_task_handoff_review_request`'* ]] ||
-    fail 'task handoff receive must precede review request in the documented order'
-  [[ "$flow" == *'atct_task_handoff_review_request`'*'atct_task_handoff_review_receive`'* ]] ||
-    fail 'task handoff review request must precede review receive in the documented order'
-  [[ "$flow" == *'atct_task_handoff_review_receive`'*'atct_task_handoff_complete`'* ]] ||
-    fail 'task handoff review receive must precede reviewer completion in the documented order'
-
-  assert_file_not_contains 'The delegator must call `atct_handoff_request`' "$REPO_ROOT/skills/atct/SKILL.md"
-  assert_file_not_contains 'record completion by calling `atct_handoff_complete`' "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
 test_goal_completion_is_commander_owned() {
@@ -1615,52 +1354,6 @@ test_goal_completion_is_commander_owned() {
   assert_file_not_contains 'record completion by calling `atct_goal_complete` and then `atct_goal_handoff_complete`' "$REPO_ROOT/skills/atct/SKILL.md"
 }
 
-test_executor_reuse_contract_is_explicit() {
-  local section
-  section="$(delegate_task_section)"
-
-  for needle in \
-    'reuse an idle executor session if one is' \
-    'Create a new one only for parallel work, worktree isolation,' \
-    'When an executor finishes and unassigned tasks remain, reuse an idle executor for the next task.' \
-    'A different task alone is not a reason to create a new executor.' \
-    'Start a new executor session only for parallel work, worktree isolation, context exhaustion, or a topic change.' \
-    'If no unassigned tasks remain, close the idle executor.'; do
-    grep -Fq -- "$needle" <<<"$section" ||
-      fail "task delegation section omits executor reuse rule <$needle>"
-  done
-
-  assert_file_not_contains 'create a fresh worker pane after the request succeeds' "$REPO_ROOT/skills/atct/SKILL.md"
-  assert_file_not_contains 'Start a new worker for a different task.' "$REPO_ROOT/skills/atct/SKILL.md"
-}
-
-test_executor_reuse_contract_preserves_idle_worker_and_reason_gated_session() {
-  local section
-  local idle_rule
-  local reuse_rule
-  local session_rule
-  local reason
-
-  section="$(delegate_task_section)"
-  idle_rule="$(grep -F -- 'reuse an idle executor session if one is' <<<"$section" || true)"
-  [[ -n "$idle_rule" ]] || fail 'task delegation section omits the idle executor choice'
-
-  reuse_rule="$(grep -F -- 'When an executor finishes and unassigned tasks remain, reuse an idle executor for the next task.' <<<"$section" || true)"
-  [[ -n "$reuse_rule" ]] || fail 'task delegation section omits reuse for a different unassigned task'
-  grep -Fq -- 'A different task alone is not a reason to create a new executor.' <<<"$section" ||
-    fail 'task delegation section permits a new executor for a different task alone'
-
-  session_rule="$(grep -F -- 'Start a new executor session only for ' <<<"$section" | sed -E 's/^.*Start a new executor session only for /Start a new executor session only for /; s/[[:space:]]+If no unassigned tasks remain,.*$//' || true)"
-  assert_eq \
-    'Start a new executor session only for parallel work, worktree isolation, context exhaustion, or a topic change.' \
-    "$session_rule" \
-    'new executor session rule must contain only the four permitted reasons'
-  for reason in 'parallel work' 'worktree isolation' 'context exhaustion' 'a topic change'; do
-    grep -Fq -- "$reason" <<<"$session_rule" ||
-      fail "new executor session rule omits permitted reason <$reason>"
-  done
-}
-
 test_goal_handoff_cause_is_preserved() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local goal_section
@@ -1668,24 +1361,6 @@ test_goal_handoff_cause_is_preserved() {
   goal_section="$(sed -n '/^## Delegate a goal$/,$p' "$REPO_ROOT/skills/commander/SKILL.md")"
   grep -Fq -- 'Claiming the goal first always' <<<"$goal_section" ||
     fail 'goal delegation section lost the claim-to-handoff refusal cause'
-}
-
-test_task_batch_record_context_reason_is_preserved() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local task_section
-
-  task_section="$(sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
-  grep -Fq -- 'What breaks when you batch is the record, not the context.' <<<"$task_section" ||
-    fail 'task delegation section lost the record/context reason'
-}
-
-test_task_batch_measurement_is_preserved() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local task_section
-
-  task_section="$(sed -n '/^## Delegate a task$/,/^## Close a task the moment it is finished$/p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
-  grep -Fq -- 'executor-33' <<<"$task_section" ||
-    fail 'task delegation section lost the three-task measurement'
 }
 
 test_role_contract_is_documented() {
@@ -1698,13 +1373,13 @@ test_role_contract_is_documented() {
 
   assert_file_contains '| Layer | Does | Does not |' "$atct_skill"
   documented_rows="$(
-    sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill" |
-      sed -nE 's/^\|[[:space:]]*`(commander|subcommander|executor)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p'
+    sed -n '/^## Roles$/,/^## Work after the plan is accepted$/p' "$atct_skill" |
+      sed -nE 's/^\|[[:space:]]*`(commander|executor)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p'
   )"
-  assert_eq $'commander\nexecutor\nsubcommander' "$(printf '%s\n' "$documented_rows" | cut -d'|' -f1 | sort)" \
+  assert_eq $'commander\nexecutor' "$(printf '%s\n' "$documented_rows" | cut -d'|' -f1 | sort)" \
     'role boundary table must contain exactly one row for each role'
 
-  for role in commander subcommander executor; do
+  for role in commander executor; do
     row="$(printf '%s\n' "$documented_rows" | awk -F'|' -v role="$role" '$1 == role { print; exit }')"
     [[ -n "$row" ]] || fail "role boundary table is missing $role"
     does="${row#*|}"
@@ -1729,7 +1404,7 @@ test_role_contract_uses_neutral_language() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local roles_section
 
-  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
+  roles_section="$(sed -n '/^## Roles$/,/^## Work after the plan is accepted$/p' "$atct_skill")"
   if grep -Eiq 'space|worktree|git|harness|multiplexer' <<<"$roles_section"; then
     fail 'role boundary table must use neutral language'
   fi
@@ -1739,21 +1414,12 @@ test_role_boundaries_cover_version_control_and_delegation_direction() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local handler_go="$REPO_ROOT/internal/daemon/handler.go"
 
-  assert_file_contains "delegate the goal's work" "$atct_skill"
+  assert_file_contains "design the goal / implement and test the goal's work / use sub-agents as it sees fit" "$atct_skill"
   assert_file_contains "commit the goal's work" "$atct_skill"
-  assert_file_contains "close a task its worker cannot" "$atct_skill"
-  assert_file_contains 'write internal version-control details' "$atct_skill"
-  assert_file_contains "delegate the goal's work" "$handler_go"
-  assert_file_contains '"executor":     {Does: []string{"implement", "test", "close the task it was given"}, DoesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"}}' "$handler_go"
+  assert_file_contains "use sub-agents as it sees fit" "$handler_go"
 }
 
-test_executor_boundary_includes_task_closure() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-
-  assert_file_contains 'close the task it was given' "$atct_skill"
-}
-
-test_subcommander_boundary_includes_goal_commit() {
+test_executor_boundary_includes_goal_commit() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
 
   assert_file_contains "commit the goal's work" "$atct_skill"
@@ -1763,12 +1429,6 @@ test_commit_workflow_requires_explicit_paths() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
 
   assert_file_contains 'name the paths explicitly; never use `git add -A`' "$atct_skill"
-}
-
-test_executor_boundary_keeps_commit_exclusion() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-
-  assert_file_contains '| `executor` | implement / test / close the task it was given | make design decisions / re-delegate / commit / write internal version-control details |' "$atct_skill"
 }
 
 test_start_does_not_claim_delegate_cannot_close() {
@@ -1787,7 +1447,7 @@ test_role_table_has_no_task_update_procedure() {
   local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
   local roles_section
 
-  roles_section="$(sed -n '/^## Roles$/,/^## Declare before you work$/p' "$atct_skill")"
+  roles_section="$(sed -n '/^## Roles$/,/^## Work after the plan is accepted$/p' "$atct_skill")"
   if grep -Fq -- 'atct_task_update' <<<"$roles_section"; then
     fail 'role boundary table must not prescribe atct_task_update procedure'
   fi
@@ -1814,7 +1474,7 @@ test_role_contract_matches_implementation() {
       sed 's/^ *//; /^$/d'
   )"
 
-  assert_file_contains 'Role values for `expected_role`: `commander`, `subcommander`, `executor`.' "$atct_skill"
+  assert_file_contains 'Role values for `expected_role`: `commander`, `executor`.' "$atct_skill"
   if [[ -z "$implementation_roles" || -z "$documented_roles" ]]; then
     printf 'role contract could not be extracted\n' >&2
     return 1
@@ -1826,11 +1486,11 @@ test_role_contract_matches_implementation() {
   fi
 
   implementation_boundaries="$(
-    sed -nE 's/^[[:space:]]*"((commander|subcommander|executor))":[[:space:]]*\{[[:space:]]*Does:[[:space:]]*\[\]string\{([^}]*)\},[[:space:]]*DoesNot:[[:space:]]*\[\]string\{([^}]*)\},?[[:space:]]*\},?[[:space:]]*$/\1|\3|\4/p' "$handler_go" |
+    sed -nE 's/^[[:space:]]*"((commander|executor))":[[:space:]]*\{[[:space:]]*Does:[[:space:]]*\[\]string\{([^}]*)\},[[:space:]]*DoesNot:[[:space:]]*\[\]string\{([^}]*)\},?[[:space:]]*\},?[[:space:]]*$/\1|\3|\4/p' "$handler_go" |
       sed -E 's/"//g; s/[[:space:]]*,[[:space:]]*/ \/ /g; s/[[:space:]]*\|[[:space:]]*/|/g; s/[[:space:]]+/ /g; s/^[[:space:]]+|[[:space:]]+$//g'
   )"
   documented_boundaries="$(
-    sed -nE 's/^\|[[:space:]]*`(commander|subcommander|executor)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p' "$atct_skill" |
+    sed -nE 's/^\|[[:space:]]*`(commander|executor)`[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*([^|]+)[[:space:]]*\|[[:space:]]*$/\1|\2|\3/p' "$atct_skill" |
       sed -E 's/[[:space:]]*\/[[:space:]]*/ \/ /g; s/[[:space:]]*\|[[:space:]]*/|/g; s/[[:space:]]+/ /g; s/^[[:space:]]+|[[:space:]]+$//g'
   )"
   if [[ -z "$implementation_boundaries" || -z "$documented_boundaries" ]]; then
@@ -1842,15 +1502,6 @@ test_role_contract_matches_implementation() {
       "$implementation_boundaries" "$documented_boundaries" >&2
     return 1
   fi
-}
-
-test_task_close_uses_handoff_review() {
-  local atct_skill="$REPO_ROOT/skills/atct/SKILL.md"
-  local close_section
-
-  close_section="$(sed -n '/^## Close a task the moment it is finished$/,$p' "$REPO_ROOT/skills/subcommander/SKILL.md")"
-  grep -Fq -- 'atct_task_handoff_complete' <<<"$close_section" ||
-    fail 'closing a task must use handoff review'
 }
 
 test_worktree_rule_defers_to_superpowers() {
@@ -1873,7 +1524,7 @@ test_worktree_rule_names_who_creates_it() {
   local worktree_section
 
   worktree_section="$(sed -n '/^## One worktree per goal$/,/^## One workspace per goal$/p' "$commander_skill")"
-  for role in commander subcommander executor; do
+  for role in commander executor; do
     grep -Fq -- "$role" <<<"$worktree_section" ||
       fail "worktree rule must name $role"
   done
@@ -1951,14 +1602,14 @@ test_role_response_does_not_leak_other_boundaries() {
   [[ -n "$role_response" ]] || fail 'role response function could not be extracted'
 
   selected_role="$(sed -nE 's/^[[:space:]]*boundary := roleBoundaries\[([^]]+)\][[:space:]]*$/\1/p' <<<"$role_response")"
-  assert_eq 'assignment.Role' "$selected_role" 'role response must select the boundary for its current role'
+  assert_eq 'visible' "$selected_role" 'role response must select the boundary for its current role'
 
-  for response_type in commanderRole subcommanderRole executorRole; do
+  for response_type in commanderRole goalExecutorRole executorRole; do
     response_block="$(sed -n "/return ${response_type}{/,/^[[:space:]]*}[[:space:]]*$/p" <<<"$role_response")"
     [[ -n "$response_block" ]] || fail "$response_type response block could not be extracted"
-    grep -Eq -- 'Does:[[:space:]]+boundary\.Does' <<<"$response_block" ||
+    grep -Eq -- 'Does:[[:space:]]+does,' <<<"$response_block" ||
       fail "$response_type response must use the selected boundary's Does"
-    grep -Eq -- 'DoesNot:[[:space:]]+boundary\.DoesNot' <<<"$response_block" ||
+    grep -Eq -- 'DoesNot:[[:space:]]+doesNot,' <<<"$response_block" ||
       fail "$response_type response must use the selected boundary's DoesNot"
   done
 }
@@ -2093,7 +1744,6 @@ MARKDOWN
 
 test_static_contract
 test_delegated_claim_contract_is_explicit
-test_declared_task_content_fix_contract_is_explicit
 test_start_identifies_before_monitor
 test_start_session_key_contract_is_explicit
 test_start_forces_commander_claim
@@ -2116,7 +1766,7 @@ test_goal_handoff_watch_contract_omits_unsafe_variants
 test_goal_handoff_watch_contract_has_required_order
 test_goal_handoff_forbids_upward_design_questions
 test_goal_handoff_names_the_single_upward_message
-test_goal_handoff_forbids_the_subcommander_decision_ask
+test_goal_handoff_forbids_the_executor_decision_ask
 test_goal_handoff_routes_decisions_through_a_request_entry
 test_goal_handoff_routes_cross_goal_facts_through_the_request_entry
 test_goal_handoff_silence_has_required_order
@@ -2127,30 +1777,18 @@ test_delegator_answers_are_balanced
 test_delegator_answers_names_the_wrong_answers_measurement
 test_unsent_report_table_covers_every_spoken_kind
 test_unsent_report_names_the_stall_detection
-test_task_delegation_preamble_is_untouched_by_upward_silence
-test_task_handoff_recreation_cause_is_documented
-test_task_handoff_recreation_uses_new_id
-test_task_handoff_recreation_keeps_worker_identity
-test_task_handoff_uses_canonical_review_order
-test_executor_reuse_contract_is_explicit
-test_executor_reuse_contract_preserves_idle_worker_and_reason_gated_session
 test_goal_handoff_cause_is_preserved
 test_goal_completion_is_commander_owned
-test_task_batch_record_context_reason_is_preserved
-test_task_batch_measurement_is_preserved
 test_role_contract_is_documented
 test_role_response_exposes_boundary_fields
 test_role_contract_uses_neutral_language
 test_role_boundaries_cover_version_control_and_delegation_direction
-test_executor_boundary_includes_task_closure
-test_subcommander_boundary_includes_goal_commit
+test_executor_boundary_includes_goal_commit
 test_commit_workflow_requires_explicit_paths
-test_executor_boundary_keeps_commit_exclusion
 test_start_does_not_claim_delegate_cannot_close
 test_start_does_not_claim_delegate_lacks_claim
 test_role_table_has_no_task_update_procedure
 test_role_contract_matches_implementation
-test_task_close_uses_handoff_review
 test_role_response_does_not_leak_other_boundaries
 test_worktree_rule_defers_to_superpowers
 test_worktree_rule_names_who_creates_it
@@ -2164,15 +1802,8 @@ test_recovery_section_has_project_path
 test_recovery_section_has_goal_path
 test_recovery_section_has_task_path_and_non_repair_note
 test_handoff_completion_reports_are_explicit
-test_task_delegation_verification_contract_is_explicit
 test_handoff_report_repair_is_explicit
-test_handoff_completion_keeps_one_normal_path
-test_delegation_names_the_atct_tools_an_executor_may_call
-test_delegation_names_the_atct_tools_an_executor_must_not_call
-test_delegation_requests_review_before_reviewer_closes_the_task
-test_delegation_template_sets_up_the_watch_between_receive_and_role
-test_delegation_template_references_the_watch_section_without_spelling_it_out
-test_delegation_template_and_executor_skill_state_the_blocked_output
+test_executor_skill_states_the_blocked_output
 test_executor_skill_sets_up_the_watch_between_receive_and_role
 test_recovery_section_explains_why_the_role_drops
 test_orchestration_skill_has_no_blanket_atct_ban
@@ -2187,6 +1818,8 @@ test_recovery_section_names_existing_tools
 test_one_workspace_per_goal_section_exists
 test_one_workspace_per_goal_binds_a_workspace_to_one_goal
 test_one_workspace_per_goal_closes_on_approval
+test_executor_uses_the_advisor_before_approach_and_review_request
+test_commander_keeps_the_advisor_enabled_and_the_independent_check
 test_one_workspace_per_goal_forbids_reuse
 test_one_workspace_per_goal_names_the_only_exception
 test_one_workspace_per_goal_sits_between_worktree_and_commit

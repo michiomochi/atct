@@ -402,7 +402,7 @@ func parseArgs(args []string) (cliConfig, error) {
 		flags.StringVar(&cfg.projectName, "project", "", "select a registered project by name")
 	}
 	if sub == "role" {
-		flags.StringVar(&cfg.roleExpected, "expect", "", "require this role: commander, subcommander, or executor")
+		flags.StringVar(&cfg.roleExpected, "expect", "", "require this role: commander or executor")
 		flags.StringVar(&cfg.roleAgentSessionID, "agent-session-id", "", "agent session identity used by session.role")
 	}
 	if sub == "stop-check" {

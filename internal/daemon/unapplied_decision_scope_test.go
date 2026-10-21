@@ -375,8 +375,8 @@ func TestGoalListForSubcommanderDeclaresGoalScope(t *testing.T) {
 	if !ok {
 		t.Fatalf("orphaned_decisions_scope = %#v, want object", data["orphaned_decisions_scope"])
 	}
-	if scope["scope"] != "goal" || scope["goal_id"] != float64(f.goalAID) || scope["role"] != "subcommander" {
-		t.Fatalf("orphaned_decisions_scope = %#v, want goal %d subcommander", scope, f.goalAID)
+	if scope["scope"] != "goal" || scope["goal_id"] != float64(f.goalAID) || scope["role"] != "executor" {
+		t.Fatalf("orphaned_decisions_scope = %#v, want goal %d executor", scope, f.goalAID)
 	}
 	if note, ok := scope["note"].(string); ok && note != "" {
 		t.Fatalf("orphaned_decisions_scope.note = %#v, want empty", scope["note"])
@@ -393,11 +393,11 @@ func TestSessionRoleUnchangedAfterExtractingHelper(t *testing.T) {
 		t.Fatalf("commander role response unexpectedly contains goal_id: %#v", commander)
 	}
 	subcommander := f.callRPC(t, "session.role", map[string]any{"agent_session_id": f.subcommanderSessionID})
-	if subcommander["role"] != "subcommander" || subcommander["goal_id"] != float64(f.goalAID) {
-		t.Fatalf("subcommander role response = %#v", subcommander)
+	if subcommander["role"] != "executor" || subcommander["goal_id"] != float64(f.goalAID) {
+		t.Fatalf("executor role response = %#v", subcommander)
 	}
 	if _, ok := subcommander["project_id"]; ok {
-		t.Fatalf("subcommander role response unexpectedly contains project_id: %#v", subcommander)
+		t.Fatalf("executor role response unexpectedly contains project_id: %#v", subcommander)
 	}
 }
 
@@ -437,4 +437,34 @@ func TestTaskCreateWithoutSessionScopesToRequestGoal(t *testing.T) {
 		"include_unapplied_answers": true,
 	})
 	assertDecisionSet(t, notificationIDs(t, result), f.decisionAID)
+}
+
+func TestGoalSessionsReturnVisibleRoleNames(t *testing.T) {
+	f := newUnappliedDecisionScopeRPCTestFixture(t)
+	ctx := context.Background()
+	taskID, workerID := int64(0), f.swappedSessionID
+	if err := f.store.DB().QueryRowContext(ctx, "SELECT id FROM tasks WHERE goal_id = ?", f.goalAID).Scan(&taskID); err != nil {
+		t.Fatalf("find goal A task: %v", err)
+	}
+	if _, err := f.store.RequestTaskHandoff(ctx, "decision-scope-task-handoff", taskID, f.subcommanderSessionID, "delegate"); err != nil {
+		t.Fatalf("RequestTaskHandoff: %v", err)
+	}
+	if _, err := f.store.ReceiveTaskHandoff(ctx, "decision-scope-task-handoff", taskID, workerID); err != nil {
+		t.Fatalf("ReceiveTaskHandoff: %v", err)
+	}
+	for id, key := range map[int64]string{f.subcommanderSessionID: "holder-key", workerID: "worker-key"} {
+		if _, err := f.store.DB().ExecContext(ctx, "UPDATE agent_sessions SET session_key = ? WHERE id = ?", key, id); err != nil {
+			t.Fatalf("set session key: %v", err)
+		}
+	}
+	data := f.callRPC(t, "goal.sessions", map[string]any{"goal_id": f.goalAID})
+	roles := map[string]string{}
+	sessions, _ := data["sessions"].([]any)
+	for _, s := range sessions {
+		m := s.(map[string]any)
+		roles[m["SessionKey"].(string)] = m["Role"].(string)
+	}
+	if roles["holder-key"] != "executor" || roles["worker-key"] != "task_worker" || len(roles) != 2 {
+		t.Fatalf("goal.sessions roles = %v, want holder-key executor and worker-key task_worker", roles)
+	}
 }

@@ -9,20 +9,18 @@ description: Use when atct_role reports commander for project-level triage, dele
 `expected_role` set to `commander`; on a mismatch, stop.
 
 - Triage project work, prepare each goal's worktree and workspace, and delegate a
-  goal before waking its subcommander.
+  goal before waking its executor.
 - Review plan and goal handoffs; accept with the matching completion tool or
   reject with the matching rejection tool.
 - After human approval, merge, publish, resolve conflicts, and clean up.
 
-Do not design a goal, implement it, or edit an executor's deliverable.
+Do not design a goal, implement it, or edit an executor's deliverable. Delegate a goal,
+not a task: the executor decides whether to use sub-agents.
 
 In `atct:dev:start` development mode only, resolve an escalated
-subcommander condition within this project if necessary. Never substitute for
-an executor; create a remediation Goal recording cause, resolution, and
+executor condition within this project if necessary. Never substitute for
+an executor outside that mode; create a remediation Goal recording cause, resolution, and
 verification afterwards.
-
-Delegating a task instead of a goal is the two-layer case; `atct:subcommander`
-carries that contract.
 
 ## One worktree per goal
 
@@ -58,10 +56,8 @@ not proceed to Step 1.
 
 - `commander`: Prepare the worktree before waking anyone for the goal; use the
   primary checkout for your own work.
-- `subcommander`: Work in the worktree for your own goal; do not create
+- `executor`: Work in the worktree for your own goal; it does not create
   worktrees for other goals.
-- `executor`: Work in the worktree for the handed-off goal; it does not create
-  one itself.
 
 The commander prepares the goal's workspace at the same time as its worktree, and
 closes that workspace when the goal is approved; see `## One workspace per goal`.
@@ -98,11 +94,11 @@ script/worktree-node-modules.sh status
 script/worktree-node-modules.sh attach --yes    # put the symlink back
 ```
 
-- **The delegator detaches, not the worker.** Measured 2026-08-28: a worker
+- **The commander detaches, not the executor.** Measured 2026-08-28: an executor
   running `pnpm install --frozen-lockfile` in a detached worktree fails with
   `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` — pnpm wants to purge
-  `node_modules` and cannot ask without a TTY. Detach before handing the task
-  off. After that the worker needs no pnpm install: `pnpm test` and `pnpm build`
+  `node_modules` and cannot ask without a TTY. Detach before handing the goal
+  to the executor. After that the executor needs no pnpm install: `pnpm test` and `pnpm build`
   both pass (exit 0, 231 tests).
 - Detach only the worktrees that need it. The cost is time, not disk: one
   `detach` spends 33s in `pnpm install`, and most worktrees never run pnpm.
@@ -143,9 +139,8 @@ When the goal is approved, close the workspace; do not hand it a second goal.
   approval.
 - **A closed workspace is not reopened.** Work that arrives afterwards belongs to a
   different goal, and a different goal gets a new workspace.
-- The delegator closes what it woke. The commander closes the subcommander's
-  workspace when the goal is approved; the subcommander ends its executors' sessions
-  when their tasks are done.
+- The delegator closes what it woke. The commander closes the executor's
+  workspace when the goal is approved.
 
 ### The only exception
 
@@ -179,20 +174,20 @@ reason: each goal already edits its own tree. What reuse still costs:
   never closed at all; on 2026-08-26 fifteen workspaces were closed by hand.
 ## Delegate a goal
 
-When handing a goal to a subcommander, keep the contract independent of how
-that subcommander is started:
+When handing a goal to an executor, keep the contract independent of how
+that executor is started:
 
 1. Hold the parent, not the goal. The delegator does not hold the goal; it must
    have a project claim before handing it off. Claiming the goal first always
    causes the handoff request to be refused because the claim already writes an
    open handoff.
-2. Record the handoff before waking the subcommander.
+2. Record the handoff before waking the executor.
    The delegator must call `atct_goal_handoff_request` with a unique `handoff_id`
    and the `goal_id`. The request takes only `handoff_id` and `goal_id`;
    do not pass `requested_by`; ATCT supplies it. Wait for the request to succeed
-   before waking the subcommander; this creates the record needed to receive and
+   before waking the executor; this creates the record needed to receive and
    complete the handoff.
-3. A monitored Codex subcommander is launched only after the request succeeds:
+3. A monitored Codex executor is launched only after the request succeeds:
 
    ```sh
    atct codex monitor -- <codex args>
@@ -204,9 +199,13 @@ that subcommander is started:
    `atct watch --monitor --token <monitor_token>`.
 
    Do not start a normal Codex process and retrofit it later.
+   Start the executor's session with the advisor available: do not disable the
+   advisor tool that the user's own settings provide, because the executor's
+   instructions have it consult the advisor before it settles an approach and
+   before it requests review.
    Name in the request every adjacent goal that touches the same files and say
    which side owns what. The delegator is the only party that can see both
-   goals, and a boundary left unstated becomes a question the subcommander
+   goals, and a boundary left unstated becomes a question the executor
    cannot answer for itself.
 4. Put these exact instructions at the very beginning of the request:
 
@@ -218,7 +217,7 @@ that subcommander is started:
    > Do this before starting work. Do not substitute your agent name or token.
    >
    > Then invoke the `atct_role` MCP tool with `expected_role` set to
-   > `subcommander`. If it reports `matches: false`, do not start work; return
+   > `executor`. If it reports `matches: false`, do not start work; return
    > the goal.
    >
    > Then, in Claude Code only, attach `atct watch --monitor --token
@@ -232,20 +231,20 @@ that subcommander is started:
    > question, a progress note, a receipt acknowledgement, a discovery, or a
    > reading of this goal's code. Send the delegator nothing until the completion
    > report, except for a decision request below. What you would have said goes
-   > into the record instead: a task for work in flight, `surprises` and
+   > into the record instead: `surprises` and
    > `needs_review` for what you found, and `next_goal_ids` for the goals that
    > should follow. You cannot call `atct_decision_ask`: the commander files a
    > decision for the human, not you. For anything that needs the human, append a
    > `review_requested` entry to your goal handoff with
    > `atct_goal_handoff_entry_append`, in the format `atct:atct` gives under
-   > `### A subcommander's decision request`.
+   > `### An executor's decision request`.
    >
    > A fact that spans another goal is not an exception. Raise it the same way;
    > the commander files the decision and replies on the same handoff with a
    > `review_received` entry, which your own watch delivers as
    > `handoff_entry_added`. Read it with `atct_goal_handoff_entry_history`.
    >
-   > When all task handoffs are accepted, record the goal review request by calling
+   > When the work is done and verified, record the goal review request by calling
    > `atct_goal_handoff_review_request` with the received `handoff_id`, the
    > `goal_id`, and a non-empty `review_request_report`.
    >
@@ -262,8 +261,16 @@ that subcommander is started:
    (which atomically completes the reviewed handoff and the goal).
    The rule is simple: only the commander may call `atct_goal_review_request`;
    after human approval and merge, only the commander may call `atct_goal_review_complete` with the `goal_id` provided in this request.
-   `atct_goal_handoff_complete` is reserved for legacy/out-of-order recovery,
+   `atct_goal_handoff_complete` is reserved for out-of-order recovery,
    not the normal goal-review path.
+
+   Before `atct_goal_review_request`, have one independent check made and re-run
+   the verification yourself. Start an Agent with `model` set to `opus` and give it
+   the goal's content, spec, plan and diff; do not give it the executor's report
+   conclusions, which would anchor it. Then run again the verification commands
+   in the executor's review request report. This check is the independent look at the implementation.
+   The executor's advisor strengthens the executor's own checking; it does not
+   replace this independent check.
 
    If the human approves or rejects a goal review in the chat, record it with
    `atct_decision_answer` before the merge: `answer` is `approve` (or `reject`,
@@ -284,7 +291,7 @@ that subcommander is started:
 
    A liveness line that reads `decision N (goal G) was answered over 10 min ago and
    is still not applied` means the decision's asker may be gone. (a) Check whether
-   goal G's subcommander is still alive with `atct_goal_sessions` and its watch.
+   goal G's executor is still alive with `atct_goal_sessions` and its watch.
    (b) If it is gone, have the goal handoff taken over with `atct_handoff_recover`:
    the new session inherits the unapplied decisions, and its watch then shows
    them. (c) The commander does not apply such an answer or rewrite it; the
@@ -300,29 +307,33 @@ that subcommander is started:
    that landed after this goal's review request; do not trial-merge the branch
    before approval.
 
-5. Keep one subcommander per goal. A subcommander may wake executors for its
+5. Keep one executor per goal. An executor may start sub-agents for its
    goal, but must not inspect or manage other goals, create another
-   subcommander, or release the goal.
-   A subcommander must not call `atct_goal_release`; releasing the goal is the
+   executor, or release the goal.
+   An executor must not call `atct_goal_release`; releasing the goal is the
    commander's job.
-   A subcommander must not claim the project. Claiming the project changes its
+   An executor must not claim the project. Claiming the project changes its
    role to commander.
 
-6. Stay out until the completion report. After waking the subcommander, the
+6. Stay out until the completion report. After waking the executor, the
    delegator sends it nothing and answers nothing about the goal's design.
    What the delegator reads instead are this project's ATCT Wakeup events, which
-   arrive from `atct watch` rather than from the subcommander: a goal with no
-   commits, a goal with no declared tasks, a claim nobody delegated, a handoff
-   nobody received. Those are what a stalled subcommander looks like from
-   outside, and they arrive whether or not it speaks. Review the goal when
+   arrive from `atct watch` rather than from the executor: a goal whose tasks
+   are all done with no linked commit (`wakeup.commits_missing`), a handoff nobody received or never reported
+   (`wakeup.handoff_unreceived`, `wakeup.handoff_unreported`). Those are what a
+   stalled executor looks like from outside, and they arrive whether or not it
+   speaks. All of them count tasks, so an executor that
+   creates no tasks raises none of them. For such a goal, check its branch
+   yourself: `git log main..wt/goal-<id>` and the worktree's status show whether
+   it is moving. Review the goal when
    `atct_goal_handoff_review_request` lands; that report is the entry point.
-   A decision request entry (`## A subcommander's decision request`) is the one
+   A decision request entry (`## An executor's decision request`) is the one
    message you do act on before then.
 
 **Out of order:** Calling `atct_goal_handoff_complete` before
 `atct_goal_review_request` closes the goal handoff, and the role is derived from a
-received, uncompleted goal handoff, so the role drops from `subcommander` to
-`executor` the moment it closes. Only the goal's holder may call
+received, uncompleted goal handoff, so the role drops from `executor` to
+`none` the moment it closes. Only the commander may call
 `atct_goal_review_request`, so the human review request can no longer be filed
 at all. Recovery takes the commander reissuing the goal handoff. Goals 180 and
 187 both stalled this way on 2026-08-27 and 2026-08-28.
@@ -336,12 +347,12 @@ suitable. If a reconnect causes the role to appear wrong, call
 `atct_session_identify` again with the same key to return to the original
 session row.
 
-## A subcommander's decision request
+## An executor's decision request
 
-A subcommander cannot call `atct_decision_ask`, so its question for the human
+An executor cannot call `atct_decision_ask`, so its question for the human
 reaches you as a `review_requested` entry on its goal handoff
 (`handoff_entry_added`, goal N, kind `review_requested`, author the
-subcommander).
+executor).
 
 1. Read the body with `atct_goal_handoff_entry_history`.
 2. File it with `atct_decision_ask`: the options, recommendation and consequences
@@ -354,15 +365,15 @@ subcommander).
    `decision <id>: <label> <answer_text>`.
 
 **Out of order:** Replying before the decision is answered and applied hands the
-subcommander an answer that does not exist yet, and a decision left open refuses
+executor an answer that does not exist yet, and a decision left open refuses
 the goal review request. On 2026-10-20 a decision nobody could record stopped
 stock-data goal 437.
 
 Right after you claim the project and right after you re-arm your watch, read
 the entry history of each goal handoff you delegated and pick up a request that
 has no reply: an entry written before the watch's SSE connection is up is not
-delivered. An open decision a subcommander filed itself, before this rule, you
-can answer from your chat the same way (step 3); the subcommander applies it
+delivered. An open decision an executor filed itself, before this rule, you
+can answer from your chat the same way (step 3); the executor applies it
 with `atct_decision_poll`. On 2026-10-20, in stock-data goal 437, such a
 decision (1180, `post_merge`) could not be recorded from the commander's chat
 and the goal stood still.
@@ -370,7 +381,7 @@ and the goal stood still.
 ## Closed goals to reclaim
 
 A done or dropped goal leaves a worktree, a branch and a workspace behind. Nothing
-reclaims them for you, and only the commander can: a subcommander cannot remove
+reclaims them for you, and only the commander can: an executor cannot remove
 the worktree it is standing in. Reclaim at the same checkpoints, plus right
 after `atct_goal_withdraw`:
 

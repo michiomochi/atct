@@ -311,8 +311,8 @@ func TestMonitorCheckAllowsExecutorWhenAnyAssignedGoalHasLiveMonitor(t *testing.
 	if err := json.Unmarshal(raw, &role); err != nil {
 		t.Fatalf("decode session.role: %v", err)
 	}
-	if role.Role != "executor" {
-		t.Fatalf("session.role = %+v, want executor", role)
+	if role.Role != "task_worker" {
+		t.Fatalf("session.role = %+v, want task_worker", role)
 	}
 }
 

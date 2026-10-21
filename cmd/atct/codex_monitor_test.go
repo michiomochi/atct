@@ -1497,16 +1497,13 @@ func TestCodexMonitorTaskCreateHandoffReconciliationLifecycle(t *testing.T) {
 	}
 
 	bridge.stateMu.Lock()
-	if len(bridge.queue) != 2 {
-		t.Fatalf("queued task-create actions = %#v, want request and receive", bridge.queue)
+	if len(bridge.queue) != 1 {
+		t.Fatalf("queued task-create actions = %#v, want only the receive (an unreceived request is not announced)", bridge.queue)
 	}
-	if bridge.queue[0].eventName != "task.create_handoff.request" || bridge.queue[0].handoffID != "create-1" {
-		t.Fatalf("queued request = %#v, want durable handoff identity", bridge.queue[0])
+	if bridge.queue[0].eventName != "task.create_handoff.receive" || bridge.queue[0].handoffID != "create-1" {
+		t.Fatalf("queued receive = %#v, want distinct agent-facing durable action", bridge.queue[0])
 	}
-	if bridge.queue[1].eventName != "task.create_handoff.receive" || bridge.queue[1].handoffID != "create-1" {
-		t.Fatalf("queued receive = %#v, want distinct agent-facing durable action", bridge.queue[1])
-	}
-	if bridge.queue[1].controlOnly {
+	if bridge.queue[0].controlOnly {
 		t.Fatal("task-create receive action is control-only, want agent-facing")
 	}
 	bridge.stateMu.Unlock()
@@ -1516,7 +1513,7 @@ func TestCodexMonitorTaskCreateHandoffReconciliationLifecycle(t *testing.T) {
 }
 
 func TestCodexMonitorTaskCreateHandoffUnknownSubmissionRecoversFresh(t *testing.T) {
-	const requestState = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"RequestedAt":"2026-09-19T00:00:01.000000000Z"}]}`
+	const requestState = `{"task_create_handoffs":[{"ID":"create-1","GoalID":7,"ReceivedAt":"2026-09-19T00:00:01.000000000Z"}]}`
 	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
 		if req.URL.Path != "/api/events/reconcile" {
 			return nil, errors.New("unexpected request path")
@@ -1556,7 +1553,7 @@ func TestCodexMonitorTaskCreateHandoffUnknownSubmissionRecoversFresh(t *testing.
 		t.Fatal("bridge disabled = false, want terminal monitor state")
 	}
 	if got := failedStarter.callsSnapshot(); len(got) != 1 || !strings.Contains(got[0], "handoff_id: create-1") {
-		t.Fatalf("unknown submission turns = %#v, want one task-create request", got)
+		t.Fatalf("unknown submission turns = %#v, want one task-create receive", got)
 	}
 
 	freshStarter := &fakeCodexTurnStarter{}
@@ -1565,7 +1562,7 @@ func TestCodexMonitorTaskCreateHandoffUnknownSubmissionRecoversFresh(t *testing.
 		t.Fatalf("fresh reconciliation: %v", err)
 	}
 	if got := freshStarter.callsSnapshot(); len(got) != 1 || !strings.Contains(got[0], "handoff_id: create-1") {
-		t.Fatalf("fresh recovery turns = %#v, want one recovered task-create request", got)
+		t.Fatalf("fresh recovery turns = %#v, want one recovered task-create receive", got)
 	}
 }
 

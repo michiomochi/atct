@@ -23,6 +23,8 @@ type commanderRole struct {
 	UILocale  string   `json:"ui_locale"`
 }
 
+// subcommanderRole is the pre-2-layer response of a goal handoff holder; it is
+// still decoded so a newer CLI works against an older daemon.
 type subcommanderRole struct {
 	Role     string   `json:"role"`
 	GoalID   int64    `json:"goal_id"`
@@ -31,6 +33,17 @@ type subcommanderRole struct {
 	UILocale string   `json:"ui_locale"`
 }
 
+// goalExecutorRole is the visible "executor": a session holding a goal handoff.
+type goalExecutorRole struct {
+	Role     string   `json:"role"`
+	GoalID   int64    `json:"goal_id"`
+	Does     []string `json:"does"`
+	DoesNot  []string `json:"does_not"`
+	UILocale string   `json:"ui_locale"`
+}
+
+// executorRole carries every response without a goal: "task_worker", "none",
+// and the legacy "executor" of an older daemon.
 type executorRole struct {
 	Role     string   `json:"role"`
 	Does     []string `json:"does"`
@@ -44,6 +57,7 @@ type roleResponse interface {
 
 func (r commanderRole) roleName() string    { return r.Role }
 func (r subcommanderRole) roleName() string { return r.Role }
+func (r goalExecutorRole) roleName() string { return r.Role }
 func (r executorRole) roleName() string     { return r.Role }
 
 func decodeSessionRole(raw json.RawMessage) (roleResponse, error) {
@@ -67,9 +81,24 @@ func decodeSessionRole(raw json.RawMessage) (roleResponse, error) {
 		}
 		return response, nil
 	case "executor":
+		// goal_id tells the new executor (a goal handoff holder) from the legacy
+		// task-holding "executor" of an older daemon.
+		var goal goalExecutorRole
+		if err := json.Unmarshal(raw, &goal); err != nil {
+			return nil, fmt.Errorf("decode executor role: %w", err)
+		}
+		if goal.GoalID != 0 {
+			return goal, nil
+		}
 		var response executorRole
 		if err := json.Unmarshal(raw, &response); err != nil {
 			return nil, fmt.Errorf("decode executor role: %w", err)
+		}
+		return response, nil
+	case "task_worker", "none":
+		var response executorRole
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode %s role: %w", discriminator.Role, err)
 		}
 		return response, nil
 	default:
@@ -79,8 +108,9 @@ func decodeSessionRole(raw json.RawMessage) (roleResponse, error) {
 
 var validSessionRoles = map[string]struct{}{
 	"commander":    {},
-	"subcommander": {},
 	"executor":     {},
+	"subcommander": {},
+	"task_worker":  {},
 }
 
 func formatSessionRole(response roleResponse) string {
@@ -88,6 +118,8 @@ func formatSessionRole(response roleResponse) string {
 	case commanderRole:
 		return fmt.Sprintf("role: %s\nproject_id: %d\n", response.Role, response.ProjectID)
 	case subcommanderRole:
+		return fmt.Sprintf("role: %s\ngoal_id: %d\n", response.Role, response.GoalID)
+	case goalExecutorRole:
 		return fmt.Sprintf("role: %s\ngoal_id: %d\n", response.Role, response.GoalID)
 	case executorRole:
 		return fmt.Sprintf("role: %s\n", response.Role)
@@ -103,17 +135,50 @@ func validateExpectedRole(expected string) error {
 	// An unknown expectation is a command-line error, not a role mismatch:
 	// treating a typo such as "king" as a real role would turn a bad guard into
 	// a misleading, valid-looking negative check.
-	return fmt.Errorf("invalid expected role %q (choose commander, subcommander, or executor)", expected)
+	return fmt.Errorf("invalid expected role %q (choose commander or executor)", expected)
+}
+
+// roleMatches reports whether a role response satisfies an expected role.
+// "executor" means a goal handoff holder (goal_id != 0); it also accepts a
+// task_worker, so a worker started before the 2-layer change can re-check its
+// role after a context compaction. "subcommander" is the old name of a goal
+// handoff holder. "none" matches nothing, so a session that lost its handoff
+// does not pass a role check.
+func roleMatches(response roleResponse, expected string) bool {
+	switch expected {
+	case "commander":
+		_, ok := response.(commanderRole)
+		return ok
+	case "executor":
+		switch response.(type) {
+		case goalExecutorRole, subcommanderRole:
+			return true
+		case executorRole:
+			// A bare {"role":"executor"} without goal_id is an older daemon's
+			// task holder; it cannot be told from a session holding nothing.
+			return response.roleName() == "task_worker"
+		}
+	case "subcommander":
+		switch response.(type) {
+		case goalExecutorRole, subcommanderRole:
+			return true
+		}
+	case "task_worker":
+		return response.roleName() == "task_worker"
+	}
+	return false
 }
 
 func checkExpectedRole(response roleResponse, expected string) (int, string) {
-	if expected == "" || response.roleName() == expected {
+	if expected == "" || roleMatches(response, expected) {
 		return 0, ""
 	}
 	switch response := response.(type) {
 	case commanderRole:
 		return 1, fmt.Sprintf("role mismatch: expected: %s; actual: %s; project_id: %d", expected, response.Role, response.ProjectID)
 	case subcommanderRole:
+		return 1, fmt.Sprintf("role mismatch: expected: %s; actual: %s; goal_id: %d", expected, response.Role, response.GoalID)
+	case goalExecutorRole:
 		return 1, fmt.Sprintf("role mismatch: expected: %s; actual: %s; goal_id: %d", expected, response.Role, response.GoalID)
 	case executorRole:
 		return 1, fmt.Sprintf("role mismatch: expected: %s; actual: %s", expected, response.Role)

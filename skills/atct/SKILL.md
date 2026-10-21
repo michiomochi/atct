@@ -1,6 +1,6 @@
 ---
 name: atct
-description: Use when working on a goal that a human is tracking - declaring the tasks you plan to do, claiming one before you start, and asking the human for a decision instead of guessing. Also use when you are about to finish and need approval.
+description: Use when working on a goal that a human is tracking - as the goal's executor, implement and verify once your plan is accepted, then request review; route every decision for the human through the commander instead of guessing. Also use when you are about to finish and need approval.
 ---
 
 # ATCT
@@ -15,27 +15,25 @@ the current operation derived from the same state machine.
 The daemon derives `expected_role` in this order of priority:
 
 - `commander`: a project claim.
-- `subcommander`: a received, uncompleted goal handoff.
-- `executor`: a received, unfinished task handoff.
+- `executor`: a received, uncompleted goal handoff.
 
-Role values for `expected_role`: `commander`, `subcommander`, `executor`.
+Role values for `expected_role`: `commander`, `executor`.
+A session that holds neither has no role.
 
 | Layer | Does | Does not |
 | --- | --- | --- |
 | `commander` | triage incoming work / split goals / prepare a working area / review landed changes / publish / resolve conflicts / clean up | design the goal / implement the goal / edit executor deliverables |
-| `subcommander` | design the goal / delegate the goal's work / review implementation / report completion for the goal / ask the commander to file decisions for the human / commit the goal's work / close a task its worker cannot | inspect or manage other goals / publish / create another subcommander / claim the project / file decisions to the human directly |
-| `executor` | implement / test / close the task it was given | make design decisions / re-delegate / commit / write internal version-control details |
+| `executor` | design the goal / implement and test the goal's work / use sub-agents as it sees fit / report completion for the goal / ask the commander to file decisions for the human / commit the goal's work | inspect or manage other goals / publish / claim the project / file decisions to the human directly |
 
 Only `atct:dev:start` may enter development mode. In that mode an executor
-escalates to its subcommander and a subcommander to its commander; resolution
-creates a remediation goal, then returns to the normal spec -> plan -> review
-flow.
+escalates to its commander; resolution creates a remediation goal, then returns
+to the normal spec -> plan -> review flow.
 
 After `atct_session_identify`, call `atct_role` before role-specific work. On
 mismatch, stop and return the handoff or let the owning layer recover it. On a
-match, load exactly the matching role skill (`atct:commander`,
-`atct:subcommander`, or `atct:executor`); role skills own their operations and
-must not replace these rules or load another role's skill.
+match, load exactly the matching role skill (`atct:commander` or
+`atct:executor`); role skills own their operations and must not replace these rules or load
+another role's skill.
 
 ## Spec and plan live in the goal
 
@@ -78,27 +76,19 @@ Checking the polished text against the original with the bundled
 
 The daemon does not check the language; this is a convention to follow.
 
-## Declare before you work
+## Work after the plan is accepted
 
 An active goal authorizes coordination; do not wait for another plan approval.
-The accepted-plan order is mandatory:
+The plan comes first:
 
-1. The plan handoff is completed first.
-2. The daemon creates the task-create handoff.
-3. The subcommander receives it and calls `atct_task_create` with its same
-   `handoff_id` and a stable `idempotency_key`; then work only on those tasks.
+1. The plan handoff is completed first. Implementation starts only after it.
+2. Implement and verify, then call `atct_goal_handoff_review_request`.
+3. Write progress in the review request report.
 
-After a goal handoff review is rejected, the daemon issues a new task-create
-handoff; receive it the same way if the fix needs new tasks.
+Closing the goal handoff leaves the session with the role `none`.
 
-**Out of order:** Tasks created before an accepted plan are never reviewed, and
-work done before it is declared never reaches the dashboard.
-
-## Fix a declared task
-
-Fix a declared `todo` or `doing` task with `atct_task_update_content`; `done`
-and `dropped` tasks are rejected. Re-declaring with the same `idempotency_key`
-does not update the task.
+**Out of order:** Work started before the plan is accepted is reviewed by no
+one.
 
 ## Watch
 
@@ -127,8 +117,7 @@ re-armed watch from emitting the same notification twice, for both forms.
 3. **When a `--once` Bash ends,** whether it printed an event, ended with no
    event, or failed, attach the Monitor first, then act on the event (its
    stdout). Do not re-arm the `--once` Bash. While the only thing you wait for
-   is an answer (a plan review, a goal review, or an executor starting or
-   working), wait on `--once` rather than the Monitor: the PreToolUse gate
+   is an answer (a plan review or a goal review), wait on `--once` rather than the Monitor: the PreToolUse gate
    refuses the Monitor form then.
 4. **Keep one.** Hold exactly one watch per token; the one started later stops
    the earlier one.
@@ -136,8 +125,8 @@ re-armed watch from emitting the same notification twice, for both forms.
    background Bash (see `atct:stop`). If the task id is unknown, say so and do
    not call `TaskStop`; never guess one.
 6. **Waiting for an answer.** When the only thing you hold is an answer you are
-   waiting for (a plan review, a goal review after
-   `atct_goal_handoff_review_request`, or an executor starting or working), stop
+   waiting for (a plan review, or a goal review after
+   `atct_goal_handoff_review_request`), stop
    the Monitor with `TaskStop`, then wait on a `--once` background Bash (step 2's
    form), which never expires, so no 30-minute notice wakes it for nothing. When
    it ends, follow step 3. While you wait, arm no other wakeup (`ScheduleWakeup`,
@@ -154,18 +143,18 @@ raised.
 
 ## Receive before you start
 
-Every implementation task is delegated. The worker must receive its task handoff before touching the work, passing the
+The executor must receive its goal handoff before touching the work, passing the
 exact SessionStart `session_key` and `monitor_token` when one was issued.
 Receipt is exclusive.
 
 ## Handoff review order
 
-1. The executor calls `atct_task_handoff_review_request` when ready.
-2. The subcommander receives and reviews it, then completes the task or rejects
-   it; rejection returns the same handoff to the worker for another request.
+1. The executor calls `atct_goal_handoff_review_request` when the work is done and verified.
+2. The commander receives and reviews it, then accepts it or rejects it;
+   rejection returns the same handoff to the executor for another request.
 
-**Out of order:** The worker that received a handoff must never close it; only
-the delegating/reviewing layer does, for task, goal, and plan handoffs. No task
+**Out of order:** The session that received a handoff must never close it; only
+the delegating/reviewing layer does, for goal and plan handoffs. No task
 becomes `done` while a decision on it is still open.
 
 ## Decisions and unsafe operations
@@ -174,7 +163,7 @@ Human decisions go through ATCT only: the commander files them with
 `atct_decision_ask`, with concrete options and a recommended default, never a
 conversational question. Apply an answer with `atct_decision_poll` before
 continuing dependent work; withdraw a decision that is no longer relevant. A
-subcommander cannot file one (see `### A subcommander's decision request`).
+executor cannot file one (see `### An executor's decision request`).
 
 A goal with an open decision, of any kind, is refused both `atct_goal_handoff_review_request`
 and `atct_goal_review_request`; the refusal names each decision. Answer or withdraw
@@ -193,17 +182,16 @@ Ask the human only when one of these holds:
 Everything else is yours to decide: a reversible, non-destructive choice of means
 that leaves the approved outcome unchanged. Decide it, carry on, and
 do not call `atct_decision_ask`. Record what you chose and why in `surprises` /
-`needs_review` of the completion report (a worker with no completion report
-records it in its review request report).
+`needs_review` of the completion report.
 
 Example: the human approved a trial of 10 stocks. Launching the 10 in one call or
 in three calls of 4, 4 and 2 yields the same approved outcome, so the number of
 launches is not a change to the approved scope. Its small API cost was part of the
 approved trial, so it is not a new cost to ask about either. Do not ask.
 
-### A subcommander's decision request
+### An executor's decision request
 
-`atct_decision_ask` is refused to a subcommander. When (a), (b) or (c) holds, or
+`atct_decision_ask` is refused to an executor. When (a), (b) or (c) holds, or
 a fact spans another goal, append one entry of kind `review_requested` per
 decision to your own goal handoff with `atct_goal_handoff_entry_append`:
 
@@ -225,8 +213,8 @@ delivers it as `handoff_entry_added`; read it with
 Bash (`## Watch` step 6). Before `atct_goal_handoff_review_request`, each
 decision you asked for is answered, or the commander is asked to withdraw it.
 
-On 2026-10-20, in stock-data goal 437, decision 1180 (a `post_merge` decision a
-subcommander had filed itself) could not be recorded from the commander's chat,
+On 2026-10-20, in stock-data goal 437, decision 1180 (a `post_merge` decision an
+executor had filed itself) could not be recorded from the commander's chat,
 and the goal stood still.
 
 ### Recording an answer from the chat
@@ -236,9 +224,8 @@ by asking the human to repeat it on the dashboard. Pass `decision_id`, the
 `answer` (an option label; for a goal review, `approve` or `reject`), an optional
 `answer_text` (a supplement, or the reason for a goal-review reject), and
 `human_quote`: the verbatim text the human typed in this chat that gives the
-answer. The commander that filed the decision records it. The commander also
-records the answer to an open decision a subcommander filed before this rule;
-the subcommander applies it with `atct_decision_poll`.
+answer. The commander that filed the decision records it. The executor applies it
+with `atct_decision_poll`.
 
 For a goal review, `human_quote` must be one of these whole lines, naming the
 decision id the dashboard shows: `approve #<decision_id>` or `承認 #<decision_id>`
@@ -285,7 +272,7 @@ review requests. The error names the project and the way back,
 expired meanwhile are applied at the next maintenance.
 
 Only the commander archives, and only when the human asks, with
-`atct project archive <name>`. A subcommander or executor never does. There is
+`atct project archive <name>`. An executor never does. There is
 no MCP tool for it, so no agent can archive on its own.
 
 If an ATCT call is refused because the project is archived, stop the work and
@@ -297,7 +284,7 @@ A delegator that answers a question about the inside of a goal is guessing; it
 has not read that goal's code. On 2026-08-27 a commander answered two such
 questions and both answers were wrong: that `tools.go` had to change before a
 tool was reachable from MCP, and that `wakeup.go` read a file it does not read.
-The subcommander that had read the code corrected both.
+The executor that had read the code corrected both.
 
 Four kinds of question belong to the delegator, because only it can see them:
 
@@ -306,26 +293,26 @@ Four kinds of question belong to the delegator, because only it can see them:
 - whether a change is already on the main branch
 - when the work is released
 
-Four kinds look similar and belong to the subcommander, because it has read the
+Four kinds look similar and belong to the executor, because it has read the
 code and the delegator has not:
 
 - which of two designs this goal takes
 - what a function in this goal's code actually does
 - how this goal's work is split into commits, and in what order
-- how this goal's work is divided among its executors
+- how this goal's work is divided among its sub-agents, if it uses any
 
-A subcommander that brings the delegator one of the second four is asking the
+An executor that brings the delegator one of the second four is asking the
 wrong reader. A delegator that answers one of them is inventing the answer.
 ## Where an unsent report goes
 
-Silence upward is only safe when nothing is lost. Every kind of message a
-subcommander used to speak has a place in the record instead, and the record
-reaches the human without passing through the delegator's context.
+An executor sends nothing upward. Whatever it would want to send has a place
+in the record, and the record reaches the human without passing through the
+delegator's context.
 
-| What used to be spoken | Where it goes |
+| What you would report | Where it goes |
 |---|---|
 | receipt of the goal | the `atct_goal_handoff_receive` record itself |
-| progress on the work | tasks: `atct_task_create`, then `done` as each one lands |
+| progress on the work | the review request report (do not create tasks) |
 | the design and why | the goal's `spec` and `plan` fields, in full, and `work_done` |
 | something found inside this goal | `surprises` and `needs_review` |
 | something found that is another goal | a `review_requested` entry on the goal handoff, for the commander to file as a decision |
@@ -333,41 +320,33 @@ reaches the human without passing through the delegator's context.
 | the goal is ready for commander review | `atct_goal_handoff_review_request`, the one message |
 
 `atct_goal_handoff_review_request` is terminal: call it once, and only after
-every declared task is accepted and committed and the goal is ready for
-commander review. Work that is unfinished or blocked stays open and goes to a decision request
-(`### A subcommander's decision request`) with concrete options and the
+the work is verified and committed and the goal is ready for commander review. Work that is unfinished or blocked stays open and goes to a decision request
+(`### An executor's decision request`) with concrete options and the
 consequence of each; it is never reported through a goal-handoff review request.
 `atct_goal_review_request` applies only to an active goal after the commander
 has received the goal-handoff review.
 
-A subcommander that stops working sends nothing at all, and the old habit caught
-that only because a delegator noticed a quiet terminal. The record catches it
-instead: a goal with tasks and no commits, or a closed handoff with nothing
-committed, each raises a Wakeup on the delegator's watch. On 2026-08-27 goal
-172 stalled with three tasks still `todo` and eight files uncommitted, and goal
-144 closed its handoff with no commits and four tasks still `todo`. Both
-Wakeups had already fired; nobody had been told to read them.
+A stopped executor is found in the record. A goal with tasks and no commits, or
+a closed handoff with nothing committed, each raises a Wakeup on the
+delegator's watch. A goal with no tasks raises none: the commander
+checks it with `git log main..wt/goal-<id>` and the status of its worktree.
 
 ## Fill in a report on a handoff that is already closed
 
-Only a subcommander or commander uses this repair path when a closed handoff
-has no report. It is not part of normal executor completion.
+Only a commander uses this repair path when a closed handoff has no report. It is not part of normal executor completion.
 
 1. Confirm the handoff is already closed and carries no report.
-2. Call `atct_task_handoff_report_amend` with the specific `handoff_id`, its
-   `task_id`, and a non-empty `complete_report`; for a goal handoff call
-   `atct_goal_handoff_report_amend` with `handoff_id`, `goal_id`, and
-   `complete_report`.
+2. Call `atct_goal_handoff_report_amend` with `handoff_id`, `goal_id`, and a
+   non-empty `complete_report`.
 
 **Out of order:** Amending an open handoff hides the missing completion instead
-of exposing it, and the worker that owed `atct_task_handoff_complete` never
-learns it owed anything.
+of exposing it, and the executor never learns it owed a report.
 
 ## Recover when your role comes back wrong
 
-If `atct_role` returns `executor` while you still hold work that should be yours, stop working and read this section.
+If `atct_role` reports no role while you still hold work that should be yours, stop working and read this section.
 
-Closing a subcommander's goal handoff drops that subcommander to `executor`
+Closing an executor's goal handoff takes that executor's role away
 with no announcement, and the dashboard shows the goal completed while its work
 is still uncommitted.
 
@@ -376,11 +355,10 @@ is still uncommitted.
 3. Only if the session key does not restore your role, recover each layer:
 
    - project: `atct_project_release` → `atct_project_claim`
-   - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (legacy/out-of-order recovery; the commander must issue the handoff again)
-   - task: after the stale lock is released, have the subcommander request a fresh `atct_task_handoff_request`
+   - goal: `atct_goal_handoff_complete` → `atct_goal_handoff_request` (the commander must issue the handoff again)
 
 **Out of order:** Layer repair before the session key closes a handoff that did
-not need closing; the subcommander cannot reissue it, and the goal waits on the
+not need closing; the executor cannot reissue it, and the goal waits on the
 commander.
 
 | Trigger | Handoff |
@@ -391,18 +369,18 @@ commander.
 | out-of-order `atct_goal_handoff_complete`, or an executor calling it | remains closed; not reissued |
 
 Rejection is automatic, so the goal step above that asks the commander to reissue the handoff is needed only for the last trigger.
-Do not use a development-mode override or close another worker's handoff.
+Do not use a development-mode override or close another executor's handoff.
 
 ## Completion
 
-Workers implement, run the task's specified verification, and request review.
-Reviewers receive, review, and complete or reject; subcommanders commit goal
-work only after its tasks are done, and commanders handle merge and publish.
+Executors implement, run the verification the goal names, and request review.
+Commanders receive, review, and accept or reject; executors commit goal
+work once it is verified, and commanders handle merge and publish.
 When committing the goal's work, name the paths explicitly; never use `git add -A`.
 
 Completion reports have five required text fields (`work_done`, `now_possible`,
 `how_to_verify`, `surprises`, `needs_review`) plus an optional `next_goal_ids`
 list of existing goal ids (empty or omitted when none). Keep the text fields
-concise and say `none` where one does not apply. A legacy `next_steps` input is
-rejected, not ignored. A goal is complete only after its tasks
-and decisions are resolved and the appropriate ATCT approval flow is recorded.
+concise and say `none` where one does not apply. A `next_steps` input is
+rejected, not ignored. A goal is complete only after its
+decisions are resolved and the appropriate ATCT approval flow is recorded.

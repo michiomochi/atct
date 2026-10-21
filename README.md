@@ -6,9 +6,9 @@ A controller tracks many aircraft at once without flying any of them. When an ai
 decision, the controller issues a *clearance*; until it arrives, the aircraft *holds short* — it
 stops before the runway and waits, without anyone taking the controls.
 
-ATCT is that tower for coding agents. You set a goal. Agents break it into tasks and work through
-them. When an agent reaches something it should not decide alone, it parks the question for you and
-keeps going where it can. You answer from one dashboard. The agent picks the answer up and continues.
+ATCT is that tower for coding agents. You set a goal. A commander hands it to an executor, which
+plans, implements and verifies it. When an agent reaches something it should not decide alone, it
+parks the question for you and keeps going where it can. You answer from one dashboard. The agent picks the answer up and continues.
 When the goal is met, it comes back to you for sign-off.
 
 ---
@@ -104,23 +104,18 @@ identification and claim or handoff receipt. `--role`, `--project`, `--goal`, `-
 are not monitor options. A running normal Codex process cannot be retrofitted; use a fresh monitored
 process.
 
-For a monitored worker, the delegator requests the handoff first, then runs
-`atct codex monitor -- <codex args>` inside a workspace to start a fresh worker session. A plain
-start bypasses the monitor. The new worker
-then calls `atct_task_handoff_receive` with its SessionStart `session_key` (and
+For a monitored executor, the commander requests the goal handoff first, then runs
+`atct codex monitor -- <codex args>` inside a workspace to start a fresh executor session. A plain
+start bypasses the monitor. The new executor
+then calls `atct_goal_handoff_receive` with its SessionStart `session_key` (and
 `monitor_token`, when emitted), and `atct_role`.
 
 Put a literal Codex argument such as `stop` after `--` so it is not interpreted as the monitor's
 stop command.
 
-Task-scoped monitors currently deliver matching task `handoff_reported`, `handoff_yielded`, and
-task-identified detection events. Review producers, review-state storage, and review MCP/HTTP APIs
-are not implemented by this capability; future review detections may use the existing identity-bearing
-event envelope and will still be task-filtered.
-
 ### Monitor liveness and recovery
 
-Eligible goal-scoped subcommander and task-scoped executor monitors run an independent one-minute
+Eligible goal-scoped executor monitors run an independent one-minute
 liveness tick. The tick is based on the last successful scoped reconciliation, so it can emit a
 bounded `atct monitor liveness:` recheck line even while an SSE connection is quiet. Project-wide
 commander monitors, malformed or unscoped selectors, and scopes with an open human decision do not
@@ -128,23 +123,23 @@ receive a prompt. A transient snapshot, reconciliation, SSE, or daemon failure s
 loop and reconnects with bounded backoff; it is not a task or monitor terminal state.
 
 A liveness line is a recheck signal, not authority: it does not approve a human decision, cross a
-scope boundary, commit work, or create a task. A subcommander accepts the plan before requesting a
-task handoff or starting an executor through the `atct codex monitor` wrapper. An executor keeps an
-open human decision parked, works only within its task, and submits the task for review instead of
-committing.
+scope boundary, commit work, or create a task. An executor has its plan accepted before it
+implements, keeps an open human decision parked, works within its goal, commits the goal's work, and
+requests the goal review.
 
 To reproduce the GREEN documentation check, use at least five fresh contexts with the same
 time/sunk-cost/authority pressure scenario. Preserve each complete raw response and provenance, then
 score every response against the generic token-bound command with no role or scope selectors,
 record-first handoff ordering,
-`atct codex monitor -- <codex args>` inside a workspace to start a fresh worker session, the worker's identify → receive(task
+`atct codex monitor -- <codex args>` inside a workspace to start a fresh executor session, the executor's identify → receive(goal
 only) → role sequence, and no retrofit. Read every response manually and retain the per-criterion
 scores; a valid monitor-wrapper command is required in every passing response.
 
 ## Setting a goal is the approval
 
-An active goal is permission to coordinate work. The agent breaks it into tasks and delegates them — it does not
-come back for sign-off on the plan, and it does not stop between tasks. Your attention goes to
+An active goal is permission to coordinate work. The executor designs the goal, implements it, and reports it
+(it does not create tasks) — it does not come back for sign-off on the plan, and it does not
+stop between steps. Your attention goes to
 the decisions it parks and to the final approval, not to granting permission at every step.
 
 It stops before anything that cannot be undone: rewriting history, discarding uncommitted work,
@@ -184,8 +179,7 @@ It prints nothing, so it composes with anything that runs on a schedule:
 */15 * * * * cd /path/to/repo && atct context --check && claude -p "/atct:start"
 ```
 
-Work means an unapplied answer, an unclaimed task, or an active goal nobody has broken down
-yet. **A task someone is already working on does not count** — waking a second session for it
+Work means an unapplied answer, an unclaimed task, or an active goal no executor holds. **A task someone is already working on does not count** — waking a second session for it
 gets the same work done twice.
 
 For harnesses without a stop hook, such as Codex, this is the whole mechanism rather than a
@@ -272,8 +266,8 @@ agents stays your business.
 |---|---|
 | **Project** | A project. Derived from the working directory, so agents never have to name it |
 | **Goal** | What you want, in one field. Active means agents may work on it |
-| **Task** | A unit of work toward the goal. Agents create and claim these |
-| **Work lock** | The claim on a task. One agent session holds it, so two never take the same task |
+| **Task** | A unit of work recorded under a goal. A decision attaches to one |
+| **Commander / executor** | The commander triages, reviews and talks to you; the executor holds the goal handoff and does the work. One goal has one executor |
 | **Decision** | A question an agent cannot settle alone, with options it wrote itself |
 
 A goal is `active`, `done`, or `dropped`. **A goal is active the moment it is created.** A goal
@@ -283,8 +277,8 @@ and its unfinished tasks along with it.
 Every option carries a `consequence` — what happens if you pick it. You should be able to decide
 without going back to ask what the choice actually means.
 
-Several agents can work one goal at the same time. Tasks are claimed atomically, so two agents never
-hold the same one.
+One goal has one executor at a time. The goal handoff is received exclusively, so two agents never
+hold the same goal.
 
 ## The screens
 

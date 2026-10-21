@@ -129,14 +129,11 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 			does:    []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"},
 			doesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"},
 		},
-		"subcommander": {
-			does:    []string{"design the goal", "delegate the goal's work", "review implementation", "report completion for the goal", "ask the commander to file decisions for the human", "commit the goal's work", "close a task its worker cannot"},
-			doesNot: []string{"inspect or manage other goals", "publish", "create another subcommander", "claim the project", "file decisions to the human directly"},
-		},
 		"executor": {
-			does:    []string{"implement", "test", "close the task it was given"},
-			doesNot: []string{"make design decisions", "re-delegate", "commit", "write internal version-control details"},
+			does:    []string{"design the goal", "implement and test the goal's work", "use sub-agents as it sees fit", "report completion for the goal", "ask the commander to file decisions for the human", "commit the goal's work"},
+			doesNot: []string{"inspect or manage other goals", "publish", "claim the project", "file decisions to the human directly"},
 		},
+		"none": {does: []string{}, doesNot: []string{}},
 	}
 
 	tests := []struct {
@@ -148,10 +145,10 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 	}{
 		{name: "commander-project-only", claimProject: true, wantRole: "commander"},
 		{name: "commander-project-and-goal", claimProject: true, claimGoal: true, wantRole: "commander"},
-		{name: "subcommander-empty-task-goal", claimGoal: true, goalIndex: -1, wantRole: "subcommander"},
-		{name: "subcommander-active-goal", claimGoal: true, goalIndex: 0, wantRole: "subcommander"},
-		{name: "executor-unclaimed-session", wantRole: "executor"},
-		{name: "executor-second-unclaimed-session", wantRole: "executor"},
+		{name: "executor-empty-task-goal", claimGoal: true, goalIndex: -1, wantRole: "executor"},
+		{name: "executor-active-goal", claimGoal: true, goalIndex: 0, wantRole: "executor"},
+		{name: "none-unclaimed-session", wantRole: "none"},
+		{name: "none-second-unclaimed-session", wantRole: "none"},
 	}
 
 	for _, tt := range tests {
@@ -219,27 +216,27 @@ func TestSessionRoleDerivesFromClaims(t *testing.T) {
 				if _, ok := fields["goal_id"]; ok {
 					t.Fatalf("commander response contains goal_id: %v", raw)
 				}
-			case "subcommander":
-				var got subcommanderRole
+			case "executor":
+				var got goalExecutorRole
 				if err := json.Unmarshal(raw, &got); err != nil {
-					t.Fatalf("decode subcommander role response %v: %v", raw, err)
+					t.Fatalf("decode executor role response %v: %v", raw, err)
 				}
 				gotRole, gotDoes, gotDoesNot = got.Role, got.Does, got.DoesNot
 				if got.GoalID != goalID {
 					t.Fatalf("goal_id = %v, want %v (response %v)", got.GoalID, goalID, raw)
 				}
 				if _, ok := fields["project_id"]; ok {
-					t.Fatalf("subcommander response contains project_id: %v", raw)
+					t.Fatalf("executor response contains project_id: %v", raw)
 				}
-			case "executor":
+			case "none":
 				var got executorRole
 				if err := json.Unmarshal(raw, &got); err != nil {
-					t.Fatalf("decode executor role response %v: %v", raw, err)
+					t.Fatalf("decode none role response %v: %v", raw, err)
 				}
 				gotRole, gotDoes, gotDoesNot = got.Role, got.Does, got.DoesNot
 				for _, field := range []string{"project_id", "goal_id"} {
 					if _, ok := fields[field]; ok {
-						t.Fatalf("executor response contains %s: %v", field, raw)
+						t.Fatalf("none response contains %s: %v", field, raw)
 					}
 				}
 			}
@@ -1947,8 +1944,8 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("goal.handoff.receive: %v", err)
 		}
-		if got := role(t, fixture, subcommander); got != "subcommander" {
-			t.Fatalf("subcommander role = %v, want %v", got, "subcommander")
+		if got := role(t, fixture, subcommander); got != "executor" {
+			t.Fatalf("goal handoff holder role = %v, want %v", got, "executor")
 		}
 
 		if _, err := dispatch(t, fixture, "task.handoff.request", map[string]any{
@@ -1965,8 +1962,8 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("handoff.receive: %v", err)
 		}
-		if got := role(t, fixture, executor); got != "executor" {
-			t.Fatalf("executor role = %v, want %v", got, "executor")
+		if got := role(t, fixture, executor); got != "task_worker" {
+			t.Fatalf("task receiver role = %v, want %v", got, "task_worker")
 		}
 	})
 
@@ -2015,8 +2012,8 @@ func TestHandoffSequenceRequiresReceiveBeforeRole(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("goal.handoff.request: %v", err)
 		}
-		if got := role(t, fixture, subcommander); got != "executor" {
-			t.Fatalf("pre-receive role = %v, want %v", got, "executor")
+		if got := role(t, fixture, subcommander); got != "none" {
+			t.Fatalf("pre-receive role = %v, want %v", got, "none")
 		}
 	})
 
@@ -2061,8 +2058,8 @@ func TestSessionRoleCarriesUILocale(t *testing.T) {
 		claimGoal    bool
 	}{
 		{name: "commander", claimProject: true},
-		{name: "subcommander", claimGoal: true},
-		{name: "executor"},
+		{name: "executor", claimGoal: true},
+		{name: "none"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fixture := newGoalListFixture(t)

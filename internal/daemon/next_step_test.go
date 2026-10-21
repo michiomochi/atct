@@ -69,7 +69,7 @@ func TestNextStepCoversEveryContinuingTransition(t *testing.T) {
 
 	wantCalls(t, "plan.handoff.complete", f.nextStep("plan.handoff.complete", planHandoffCompleteParams{
 		HandoffID: "gh-1", GoalID: goal.ID, AgentSessionID: f.commanderID, CompleteReport: "ok",
-	}), "atct_task_create_handoff_receive")
+	}), "atct_goal_handoff_review_request")
 
 	tasks := f.createTasks(goal.ID, "only task")
 	wantCalls(t, "task.handoff.request", f.nextStep("task.handoff.request", taskHandoffRequestParams{

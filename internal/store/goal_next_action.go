@@ -49,6 +49,9 @@ var NextActionSpecs = map[string]NextActionSpec{
 	"executor_receive_task":               {Actor: "executor", Call: "atct_task_handoff_receive"},
 	"executor_implement":                  {Actor: "executor", Call: "atct_task_handoff_review_request"},
 	"subcommander_request_goal_review":    {Actor: "subcommander", Call: "atct_goal_handoff_review_request"},
+	// executor_work: the goal handoff holder (the visible "executor"; the actor
+	// keeps its internal name) implements and verifies, then requests the goal review.
+	"executor_work": {Actor: "subcommander", Call: "atct_goal_handoff_review_request"},
 }
 
 // nextActionInput is everything deriveNextAction reads. Handoffs are the latest
@@ -335,7 +338,7 @@ func deriveNextAction(in nextActionInput) NextAction {
 		}
 	}
 	// A received handoff with no review requested, or with its rejection
-	// received, is the subcommander's own work: fall through to the tasks.
+	// received, is the executor's own work: fall through to the tasks.
 
 	active := make([]domain.Task, 0, len(in.Tasks))
 	for _, task := range in.Tasks {
@@ -362,10 +365,9 @@ func derivePlanNextAction(in nextActionInput) NextAction {
 		}
 		return newNextAction("commander_review_plan")
 	}
-	if t := in.TaskCreate; t != nil && t.ReceivedAt == nil {
-		return newNextAction("subcommander_receive_task_create")
-	}
-	return newNextAction("subcommander_create_tasks")
+	// The plan is accepted and no task is declared. Tasks are optional now, so
+	// the next step is the work itself whether or not a task-create handoff exists.
+	return newNextAction("executor_work")
 }
 
 // deriveTaskNextAction picks the step by task status priority, not by task order:

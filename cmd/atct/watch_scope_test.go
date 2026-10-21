@@ -367,8 +367,8 @@ func TestHandoffOnlyReconciliationProjectsTaskCreateUntilComplete(t *testing.T) 
 			t.Fatalf("reconcileWatchScope: %v", err)
 		}
 	}
-	want := "atct task-create handoff requested (goal_id: 7, handoff_id: create-1)\n" +
-		"atct task-create handoff received (goal_id: 7, handoff_id: create-1)\n"
+	// The unreceived request is not projected: the goal executor creates no tasks.
+	want := "atct task-create handoff received (goal_id: 7, handoff_id: create-1)\n"
 	if got := output.String(); got != want {
 		t.Fatalf("task-create projection = %q, want %q", got, want)
 	}
@@ -482,7 +482,7 @@ func TestWatchReconcileSkipsRecoveredAndStoppedGoalHandoffs(t *testing.T) {
 	}{
 		"recovered goal handoff":        {watchScope{ProjectID: "1", Role: "subcommander"}, `{"goals":[{"id":7,"status":"active"}],"goal_handoffs":[{"ID":"h","GoalID":7,"ReviewRejectedAt":"r",` + rec + `}]}`},
 		"recovered task handoff":        {watchScope{ProjectID: "1", GoalID: "7", TaskID: "8", Role: "executor"}, `{"goals":[{"id":7,"status":"active"}],"task_handoffs":[{"ID":"h","GoalID":7,"TaskID":8,"ReviewRejectedAt":"r",` + rec + `}]}`},
-		"recovered task-create":         {watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}, `{"goals":[{"id":7,"status":"active"}],"task_create_handoffs":[{"ID":"h","GoalID":7,"RequestedAt":"q",` + rec + `}]}`},
+		"recovered task-create":         {watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}, `{"goals":[{"id":7,"status":"active"}],"task_create_handoffs":[{"ID":"h","GoalID":7,"ReceivedAt":"q",` + rec + `}]}`},
 		"dropped goal plan handoff":     {watchScope{ProjectID: "1", Role: "commander"}, `{"goals":[{"id":7,"status":"dropped"}],"plan_handoffs":[{"ID":"h","GoalID":7,"ReviewRequestedAt":"q"}]}`},
 		"done goal task handoff":        {watchScope{ProjectID: "1", GoalID: "7", Role: "subcommander"}, `{"goals":[{"id":7,"status":"done"}],"task_handoffs":[{"ID":"h","GoalID":7,"TaskID":8,"ReviewRequestedAt":"q"}]}`},
 		"commander goal request echoes": {watchScope{ProjectID: "1", Role: "commander"}, `{"goals":[{"id":7,"status":"active"}],"goal_handoffs":[{"ID":"h","GoalID":7,"RequestedAt":"q"}]}`},

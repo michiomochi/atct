@@ -54,19 +54,22 @@ func TestAskRuleStartSkill(t *testing.T) {
 	})
 }
 
-func TestAskRuleSubcommanderSkill(t *testing.T) {
+// The subcommander skill was merged into atct:executor; it only points there.
+func TestSubcommanderSkillPointsToExecutor(t *testing.T) {
 	rel := "skills/subcommander/SKILL.md"
 	skill := readRepoText(t, rel)
-	assertContainsAll(t, rel, skill, []string{
-		"only in the cases `atct:atct` lists",
-	})
+	assertContainsAll(t, rel, skill, []string{"atct:executor"})
 }
 
 func TestAskRuleExecutorSkill(t *testing.T) {
 	rel := "skills/executor/SKILL.md"
 	skill := readRepoText(t, rel)
 	assertContainsAll(t, rel, skill, []string{
-		"Decide a reversible, non-destructive choice of means",
+		"An executor's decision request",
+		"only in the cases `atct:atct`",
+		"decide a reversible,",
+		"non-destructive choice of means yourself",
+		"cannot call `atct_decision_ask`",
 	})
 	assertContainsNone(t, rel, skill, []string{
 		"Return design or irreversible decisions to the delegator",

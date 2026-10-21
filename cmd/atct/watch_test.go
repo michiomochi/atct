@@ -1078,6 +1078,21 @@ func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
 			want: true,
 		},
 		{
+			name:  "executor ignores unreceived task-create handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskCreateHandoffs: []watchTaskCreateHandoff{{
+				ID: "c", GoalID: 249, RequestedAt: at("requested"),
+			}}},
+		},
+		{
+			name:  "executor has received task-create handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskCreateHandoffs: []watchTaskCreateHandoff{{
+				ID: "c", GoalID: 249, RequestedAt: at("requested"), ReceivedAt: at("received"),
+			}}},
+			want: true,
+		},
+		{
 			name:  "subcommander awaits executor",
 			scope: subcommanderScope,
 			reconciliation: watchReconciliation{
@@ -2193,7 +2208,7 @@ func TestEmitWatchWakeupWritesOneLinePerCondition(t *testing.T) {
 	}{
 		{"wakeup.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct wakeup: goal goal-1 has all tasks done; request named goal review with atct_goal_handoff_review_request"},
 		{"wakeup.commits_missing", watchDecision{GoalID: "goal-2"}, "atct wakeup: goal goal-2 has no linked commits"},
-		{"wakeup.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct wakeup: goal goal-3 has no tasks declared"},
+		{"wakeup.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct wakeup: goal goal-3 has no tasks (tasks are optional; nothing to declare)"},
 		{"wakeup.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct wakeup: goal goal-4 has all tasks dropped"},
 		{"wakeup.unclaimed_doing", watchDecision{TaskID: "task-1"}, "atct wakeup: task task-1 is doing without a work lock"},
 		{"wakeup.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}, "atct wakeup: handoff handoff-1 has no receipt"},
@@ -2553,5 +2568,16 @@ func TestReconcileWatchScopeSkipsGoalCreatedByAgent(t *testing.T) {
 	// watermark path.
 	if got := reconcileGoalCreatedOutput(t, `{"monitor_last_reconciled_at":"2026-09-19T00:00:00Z","goals":`+goals+`,`+rest); got != want {
 		t.Fatalf("watermark output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchTaskCreateHandoffEventIgnoresUnreceived(t *testing.T) {
+	at := func(value string) *string { return &value }
+	if event, _, ok := watchTaskCreateHandoffEvent(watchTaskCreateHandoff{ID: "c", GoalID: 7, RequestedAt: at("requested")}); ok {
+		t.Fatalf("unreceived task-create handoff projected %q, want nothing", event)
+	}
+	event, decision, ok := watchTaskCreateHandoffEvent(watchTaskCreateHandoff{ID: "c", GoalID: 7, RequestedAt: at("requested"), ReceivedAt: at("received")})
+	if !ok || event != "task.create_handoff.receive" || decision.HandoffID != "c" {
+		t.Fatalf("received task-create handoff = (%q, %#v, %v), want task.create_handoff.receive", event, decision, ok)
 	}
 }

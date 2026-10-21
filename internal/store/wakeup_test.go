@@ -403,7 +403,7 @@ func TestEvaluateWakeupCountsAndClassifiesAllUnstartedTasks(t *testing.T) {
 	}
 }
 
-func TestEvaluateWakeupDoesNotReportGoalWithTasksAsUndeclared(t *testing.T) {
+func TestEvaluateWakeupDoesNotReportAnyGoalAsUndeclared(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
@@ -417,7 +417,7 @@ func TestEvaluateWakeupDoesNotReportGoalWithTasksAsUndeclared(t *testing.T) {
 	if _, err := s.CreateTasks(ctx, declaredGoal.ID, "agent", "wakeup-declared", []string{"Declared task"}, []string{"Complete the declared task."}); err != nil {
 		t.Fatalf("CreateTasks: %v", err)
 	}
-	emptyGoal, err := s.CreateGoal(ctx, project.ID, "Goal without declared tasks", "human")
+	_, err = s.CreateGoal(ctx, project.ID, "Goal without declared tasks", "human")
 	if err != nil {
 		t.Fatalf("CreateGoal empty: %v", err)
 	}
@@ -426,8 +426,9 @@ func TestEvaluateWakeupDoesNotReportGoalWithTasksAsUndeclared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateWakeup: %v", err)
 	}
-	if len(state.UndeclaredGoals) != 1 || state.UndeclaredGoals[0].ID != emptyGoal.ID {
-		t.Fatalf("undeclared goals = %#v, want only %d", state.UndeclaredGoals, emptyGoal.ID)
+	// Tasks are optional: a goal with none is not reported either.
+	if len(state.UndeclaredGoals) != 0 {
+		t.Fatalf("undeclared goals = %#v, want none", state.UndeclaredGoals)
 	}
 }
 
@@ -1044,5 +1045,39 @@ func updateWakeupTask(t *testing.T, s *Store, taskID int64, status domain.TaskSt
 	t.Helper()
 	if _, err := s.UpdateTask(context.Background(), taskID, status, 0); err != nil {
 		t.Fatalf("UpdateTask %d: %v", taskID, err)
+	}
+}
+
+// A goal handoff holder with no tasks is the normal 2-layer shape: tasks are an
+// optional progress record, so the goal is not reported as undeclared.
+func TestEvaluateWakeupDoesNotReportHandoffHolderWithoutTasksAsUndeclared(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "Executor works without tasks", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	const requesterLabel = "no-task-requester"
+	const receiverLabel = "no-task-receiver"
+	addLiveProjectClaim(t, s, goal.ID, requesterLabel)
+	addTestAgentSession(t, s, receiverLabel)
+	handoff, err := s.RequestGoalHandoff(ctx, "no-task-handoff", goal.ID, testSessionID(requesterLabel), "")
+	if err != nil {
+		t.Fatalf("RequestGoalHandoff: %v", err)
+	}
+	if _, err := s.ReceiveGoalHandoff(ctx, handoff.ID, goal.ID, testSessionID(receiverLabel)); err != nil {
+		t.Fatalf("ReceiveGoalHandoff: %v", err)
+	}
+
+	state, err := s.EvaluateWakeup(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("EvaluateWakeup: %v", err)
+	}
+	if len(state.UndeclaredGoals) != 0 {
+		t.Fatalf("undeclared goals = %#v, want none for a handoff holder without tasks", state.UndeclaredGoals)
 	}
 }

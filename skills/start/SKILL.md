@@ -78,13 +78,13 @@ Ordinary `codex` and `codex exec` remain unchanged. The known
 `atct codex monitor exec ...` pass-through is non-interactive and is not a
 monitored interactive session.
 
-For a worker, the delegator first records its task handoff, then starts the
-worker process through `atct codex monitor -- <codex args>`. Placing that
-command in a workspace is the terminal multiplexer's concern. The worker then
-performs `atct_session_identify` → `atct_task_handoff_receive` with its `task_id`
-and `handoff_id`, using the exact `session_key` and optional `monitor_token` from
+For an executor, the commander first records its goal handoff, then starts the
+executor process through `atct codex monitor -- <codex args>`. Placing that
+command in a workspace is the terminal multiplexer's concern. The executor then
+performs `atct_session_identify` → `atct_goal_handoff_receive` with its `goal_id`,
+using the exact `session_key` and optional `handoff_id` and `monitor_token` from
 SessionStart → `atct_role`. Starting Codex directly bypasses the monitor wrapper
-and is forbidden for a monitored worker.
+and is forbidden for a monitored executor.
 
 ### Liveness is a recheck, not authority
 
@@ -92,11 +92,11 @@ A one-minute liveness line means that the last scoped reconciliation should be
 rechecked. It does not approve a human decision, authorize a scope change,
 create work, or authorize a commit.
 
-- A subcommander accepts the plan first. Only then does it request the task
-  handoff and start the executor through `atct codex monitor -- <codex args>`.
-- An executor keeps an open human decision parked and stays within its task. It
-  implements and tests, then submits the task for review; it does not commit or
-  cross the decision because a liveness prompt arrived.
+- An executor has its plan accepted first. Only then does it implement. It may
+  start sub-agents for the work; they call no ATCT tool.
+- An executor keeps an open human decision parked and stays within its goal. It
+  implements and tests, then requests the goal review; it does not cross the
+  decision because a liveness prompt arrived.
 
 Transient watch or daemon failures recover in the watch loop with bounded
 backoff and reconnect. A prompt is not durable work and does not replace the
@@ -116,19 +116,22 @@ Invoking this skill is not only a request to begin. It assigns you a role: **for
 this repository, you own what ATCT says.** Every claim, every `done`, every
 parked decision is yours to keep accurate, and nobody else will do it for you.
 
-That obligation transfers with the work. Delegate every implementation task,
-then accept its review with `atct_task_handoff_complete`; that closes the task.
-A delegate reporting success is not a substitute for the recorded review.
+That obligation transfers with the work. Delegate every goal to an executor,
+then receive its goal review (`atct_goal_handoff_review_receive`), check it, and
+ask the human to approve with `atct_goal_review_request`. After the approval and
+the merge, call `atct_goal_review_complete`; do not close the goal with
+`atct_goal_handoff_complete`. A delegate reporting success is not a substitute
+for the recorded review.
 
 The failure this prevents is specific and has happened: an orchestrator
-delegated six tasks, all six landed, and every one of them still read `todo` on
-the dashboard because the orchestrator moved on to the next request. The human
-found it before the agent did.
+delegated six pieces of work, all six landed, and every one of them still read
+`todo` on the dashboard because the orchestrator moved on to the next request.
+The human found it before the agent did.
 
 ## The loop
 
-The loop coordinates delegated work. A worker receives each implementation task
-with `atct_task_handoff_receive` before starting it.
+The loop coordinates delegated work. An executor receives each goal with
+`atct_goal_handoff_receive` before starting it.
 
 Run this until nothing is left, not until the next natural pause.
 
@@ -147,21 +150,16 @@ Run this until nothing is left, not until the next natural pause.
    what the right next step is, and polling is how the human learns their answer
    landed.
 
-3. **Fill the gaps.** A goal with no tasks is a goal nobody has broken down yet.
-   Call `atct_task_create` with the tasks you intend to do. Do not ask whether
-   the breakdown is right: propose it by creating the tasks, and let the human
-   correct it from the dashboard.
+3. **Fill the gaps.** A goal nobody holds is a goal nobody has started. Call
+   `atct_goal_handoff_request`, then wake an executor for it. Do not create
+   tasks for it; the executor does not create any either.
 
-4. **Delegate each task.** Call `atct_task_handoff_request`, then wake an
-   executor. It receives the handoff, implements and tests the task, and
-   requests review.
+4. **Review it.** When the executor requests the goal review, receive it and
+   accept or reject it. A goal left open after the work landed makes the
+   dashboard lie, and the human plans around that dashboard.
 
-5. **Review it.** Receive the task review and call
-   `atct_task_handoff_complete` on acceptance. A task left open after the work
-   landed makes the dashboard lie, and the human plans around that dashboard.
-
-6. **Go back to 1.** Do not report and wait. When this goal has no unclaimed
-   tasks left, move to another active goal.
+5. **Go back to 1.** Do not report and wait. When this goal has been handed to
+   an executor, move to another active goal.
 
 ## When to come back to the human
 
@@ -171,10 +169,10 @@ Four times, and no others:
   `atct` skill for what counts
 - You need something only the human can do (a permission, a credential, an
   external account, approval of a cost not yet approved) — `atct_decision_ask`
-  (a subcommander appends a `review_requested` entry to its goal handoff instead;
-  see `atct:atct` `### A subcommander's decision request`)
+  (an executor appends a `review_requested` entry to its goal handoff instead;
+  see `atct:atct` `### An executor's decision request`)
 - The work would change an outcome the human asked for or approved —
-  `atct_decision_ask` with `wait_ms=0` (a subcommander: the entry above), then
+  `atct_decision_ask` with `wait_ms=0` (an executor: the entry above), then
   keep going on something that does not depend on it
 - A goal is met — `atct_goal_review_request` for human approval, then
   `atct_goal_review_complete` after approval and merge
@@ -182,11 +180,11 @@ Four times, and no others:
 A reversible, non-destructive choice of means inside the approved outcome is none
 of these: decide it and record it in the completion report.
 
-Finishing a task is none of these.
+Finishing a piece of work inside a goal is none of these.
 
 ## What this skill is not
 
-It is not permission to skip the work. Declaring six tasks and claiming all six
+It is not permission to skip the work. Writing six progress notes and claiming all six
 does not advance a goal; the commit does. Nor is it permission to decide what
 the human already asked to decide — an open decision stays open until they
 answer it or you withdraw it.

@@ -36,6 +36,7 @@ const codeKeys: Partial<Record<string, TranslationKey>> = {
   subcommander_delegate_task: "nextAction.code.subcommander_delegate_task",
   executor_receive_task: "nextAction.code.executor_receive_task",
   executor_implement: "nextAction.code.executor_implement",
+  executor_work: "nextAction.code.executor_work",
   subcommander_request_goal_review: "nextAction.code.subcommander_request_goal_review",
 };
 

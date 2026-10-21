@@ -16,22 +16,29 @@ const states: { action: NextActionValue; expected: Record<"ja" | "en", string> }
   {
     action: { code: "subcommander_plan", actor: "subcommander" },
     expected: {
-      en: "subcommander · Waiting for a plan (write the spec and plan)",
-      ja: "subcommander · 計画待ち（spec と plan を書く）",
+      en: "executor · Waiting for a plan (write the spec and plan)",
+      ja: "executor · 計画待ち（spec と plan を書く）",
     },
   },
   {
     action: { code: "executor_implement", actor: "executor", task_count: 2 },
     expected: {
-      en: "executor · In progress (2 task(s))",
-      ja: "executor · 実装中 (2件)",
+      en: "task · In progress (2 task(s))",
+      ja: "task · 実装中 (2件)",
+    },
+  },
+  {
+    action: { code: "executor_work", actor: "subcommander" },
+    expected: {
+      en: "executor · Working on it (request the goal review when done)",
+      ja: "executor · 実装中（終わったら goal の review を依頼する）",
     },
   },
   {
     action: { code: "subcommander_review_task", actor: "subcommander", task_count: 1 },
     expected: {
-      en: "subcommander · Waiting for review (1 task(s))",
-      ja: "subcommander · レビュー待ち (1件)",
+      en: "executor · Waiting for review (1 task(s))",
+      ja: "executor · レビュー待ち (1件)",
     },
   },
   {
@@ -51,7 +58,7 @@ const states: { action: NextActionValue; expected: Record<"ja" | "en", string> }
   {
     action: { code: "commander_reject_handoff", actor: "commander" },
     expected: {
-      en: "commander · Rejected. Send it back to the subcommander",
+      en: "commander · Rejected. Send it back to the executor",
       ja: "commander · 却下済み。差し戻す",
     },
   },
