@@ -200,6 +200,10 @@ that executor is started:
    `atct watch --monitor --token <monitor_token>`.
 
    Do not start a normal Codex process and retrofit it later.
+   Start the executor's session with the advisor available: do not disable the
+   advisor tool that the user's own settings provide, because the executor's
+   instructions have it consult the advisor before it settles an approach and
+   before it requests review.
    Name in the request every adjacent goal that touches the same files and say
    which side owns what. The delegator is the only party that can see both
    goals, and a boundary left unstated becomes a question the executor
@@ -267,6 +271,8 @@ that executor is started:
    conclusions, which would anchor it. Then run again the verification commands
    in the executor's review request report. With no task review in between, this check is what stands
    in for the independent look at the implementation.
+   The executor's advisor strengthens the executor's own checking; it does not
+   replace this independent check.
 
    If the human approves or rejects a goal review in the chat, record it with
    `atct_decision_answer` before the merge: `answer` is `approve` (or `reject`,

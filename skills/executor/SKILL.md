@@ -40,8 +40,14 @@ Then call `atct_role` with `expected_role` set to `executor`; on a mismatch, sto
 - Request review with `atct_goal_handoff_review_request`, passing the received
   `handoff_id`, the `goal_id`, and a non-empty `review_request_report`. The report
   states the work, every command you ran and its result, the checks you could not
-  run (say "could not run"), and the changed paths. On a large diff you may first
-  have an opus sub-agent check it (optional); write what it found in the report.
+  run (say "could not run"), and the changed paths.
+- Use the advisor, when the advisor tool is available in your session (skip this
+  where it is not): consult it before you settle a design or implementation
+  approach, and again before you call `atct_goal_handoff_review_request`. Give it
+  the goal's content, your approach or your diff, and the verification results. Fix
+  what it finds that you agree with. In the review request report, record in one or
+  two lines what you asked the advisor and what you changed because of it. This
+  adds no tool call and no record of its own.
 - A rejection arrives as a wakeup on your watch: receive it, correct on the same
   handoff, and request review again.
 - An approval that only matters after the merge (a production deploy, a production

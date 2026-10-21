@@ -1082,6 +1082,28 @@ test_one_workspace_per_goal_closes_on_approval() {
   assert_file_contains 'atct_goal_review_complete' "$REPO_ROOT/skills/commander/SKILL.md"
 }
 
+test_executor_uses_the_advisor_before_approach_and_review_request() {
+  local skill="$REPO_ROOT/skills/executor/SKILL.md"
+  assert_file_contains 'Use the advisor, when the advisor tool is available in your session' "$skill"
+  assert_file_contains 'before you settle a design or implementation' "$skill"
+  assert_file_contains 'again before you call `atct_goal_handoff_review_request`' "$skill"
+  assert_file_contains 'what you asked the advisor and what you changed because of it' "$skill"
+  assert_file_not_contains 'opus sub-agent' "$skill"
+}
+
+test_commander_keeps_the_advisor_enabled_and_the_independent_check() {
+  local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
+  assert_file_contains 'Start the executor'"'"'s session with the advisor available' "$commander_skill"
+  assert_file_contains 'do not disable the' "$commander_skill"
+  assert_file_contains 'advisor tool that the user'"'"'s own settings provide' "$commander_skill"
+  assert_file_contains 'it does not' "$commander_skill"
+  assert_file_contains 'replace this independent check' "$commander_skill"
+  assert_file_contains 'Start an Agent with `model` set to `opus`' "$commander_skill"
+  # No model name or launch flag belongs in the skill.
+  assert_file_not_contains 'CLAUDE_CODE_DISABLE_ADVISOR_TOOL' "$commander_skill"
+  assert_file_not_contains 'advisorModel' "$commander_skill"
+}
+
 test_one_workspace_per_goal_forbids_reuse() {
   local commander_skill="$REPO_ROOT/skills/commander/SKILL.md"
   assert_file_contains 'do not hand it a second goal' "$commander_skill"
@@ -1837,6 +1859,8 @@ test_recovery_section_names_existing_tools
 test_one_workspace_per_goal_section_exists
 test_one_workspace_per_goal_binds_a_workspace_to_one_goal
 test_one_workspace_per_goal_closes_on_approval
+test_executor_uses_the_advisor_before_approach_and_review_request
+test_commander_keeps_the_advisor_enabled_and_the_independent_check
 test_one_workspace_per_goal_forbids_reuse
 test_one_workspace_per_goal_names_the_only_exception
 test_one_workspace_per_goal_sits_between_worktree_and_commit
