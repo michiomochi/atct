@@ -1,0 +1,234 @@
+import type { Locale } from "../i18n";
+import { en, type TranslationKey } from "../i18n/en";
+import { ja } from "../i18n/ja";
+import type { Goal, TaskView } from "./api";
+
+export const DECISION_EVENT_NAMES = [
+  "decision.created",
+  "decision.answered",
+  "decision.withdrawn",
+  "decision.applied",
+  "decision.approved",
+  "decision.rejected",
+  "goal.created",
+  // ゴールの取り下げで状態が変わるので、画面を更新する。
+  "goal.withdrawn",
+  "task.handoff.request",
+  "task.handoff.receive",
+  "task.handoff.review.request",
+  "task.handoff.review.receive",
+  "task.handoff.review.reject",
+  "task.handoff.complete",
+  "goal.handoff.request",
+  "goal.handoff.receive",
+  "goal.handoff.review.request",
+  "goal.handoff.review.receive",
+  "goal.handoff.review.reject",
+  "goal.handoff.complete",
+  "plan.handoff.review.request",
+  "plan.handoff.review.receive",
+  "plan.handoff.review.reject",
+  "plan.handoff.complete",
+  "detection.completion_report_missing",
+  "detection.commits_missing",
+  "detection.undeclared_goal",
+  "detection.all_tasks_dropped",
+  "detection.unclaimed_doing",
+  "detection.handoff_unreceived",
+  "detection.handoff_unreported",
+  // 報告が届いたことは異常ではないが、handoff の状態が変わるので画面は更新する。
+  "handoff_reported",
+  // 新しい handoff entry は時系列表示を再取得できる状態にする。
+  "handoff_entry_added",
+  "detection.claim_undelegated",
+  "detection.decision_answered_unapplied",
+  "detection.decision_default_unapplied",
+  "detection.claim_stale",
+] as const;
+
+export const KEEPALIVE_EVENT_NAME = "keepalive" as const;
+
+export type DecisionEventName = (typeof DECISION_EVENT_NAMES)[number];
+
+export function isDecisionEventName(value: string): value is DecisionEventName {
+  return (DECISION_EVENT_NAMES as readonly string[]).includes(value);
+}
+
+export interface AnswerInput {
+  answer_label: string;
+  answer_text: string;
+}
+
+export type AnswerErrors = Partial<Record<keyof AnswerInput, string>>;
+
+export function validateAnswer(input: AnswerInput): AnswerErrors {
+  const errors: AnswerErrors = {};
+  const hasLabel = input.answer_label.trim().length > 0;
+  const hasText = input.answer_text.trim().length > 0;
+
+  if (!hasLabel && !hasText) {
+    const message = "Enter a label or answer text.";
+    errors.answer_label = message;
+    errors.answer_text = message;
+  }
+
+  return errors;
+}
+
+export interface CompletionLike {
+  kind: string;
+  status: string;
+}
+
+export interface CompletionReportFields {
+  work_done: string;
+  now_possible: string;
+  how_to_verify: string;
+  surprises: string;
+  needs_review: string;
+}
+
+export function hasCompletionReport(report: CompletionReportFields): boolean {
+  return Object.values(report).some((value) => value.trim().length > 0);
+}
+
+export function filterDecisionsByTask<T extends { task_id?: string }>(decisions: T[], taskID: string): T[] {
+  if (!taskID) return [];
+  return decisions.filter((decision) => decision.task_id === taskID);
+}
+
+export function findOpenGoalReview<T extends CompletionLike>(decisions: T[]): T | undefined {
+  return decisions.find((decision) => decision.kind === "goal_review" && decision.status === "open");
+}
+
+// The one place that removes a leading Markdown heading marker from a line.
+// A line that only looks like one (#hashtag, 7+ #s) is returned unchanged.
+export function stripHeadingMarker(line: string): string {
+  const trimmed = line.trim();
+  const heading = /^#{1,6}(?:[ \t]+(.*)|$)/.exec(trimmed);
+  return heading ? (heading[1] ?? "").trim() : trimmed;
+}
+
+// A goal's content is one field; these two decide what counts as its first line
+// and what counts as the rest, so seven components do not each decide separately.
+export function headline(content: string): string {
+  const index = content.indexOf("\n");
+  return stripHeadingMarker(index < 0 ? content : content.slice(0, index));
+}
+
+export function body(content: string): string {
+  const index = content.indexOf("\n");
+  return index < 0 ? "" : content.slice(index + 1).trim();
+}
+
+export function encodePathSegment(value: string): string {
+  return encodeURIComponent(value);
+}
+
+export function groupGoalsByProject(goals: Goal[]): Array<[string, Goal[]]> {
+  const groups = new Map<string, Goal[]>();
+
+  for (const goal of goals) {
+    const projectName = goal.project_name || "-";
+    const projectGoals = groups.get(projectName);
+    if (projectGoals) {
+      projectGoals.push(goal);
+    } else {
+      groups.set(projectName, [goal]);
+    }
+  }
+
+  return Array.from(groups.entries()).sort(([left], [right]) => {
+    if (left === right) return 0;
+    return left < right ? -1 : 1;
+  });
+}
+
+export function sortTasksByOrder(tasks: TaskView[]): TaskView[] {
+  return [...tasks].sort((left, right) => left.order - right.order);
+}
+
+export function resolveRouteID(id: string, pathname: string, prefix: string): string {
+  if (id !== "_") return id;
+
+  const segment = pathname.slice(prefix.length).split("/", 1)[0] ?? "";
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+const statusKeys: Record<string, TranslationKey> = {
+  todo: "status.task.todo",
+  doing: "status.task.doing",
+  done: "status.task.done",
+  dropped: "status.task.dropped",
+  active: "status.task.active",
+  completed: "status.task.completed",
+  open: "status.decision.open",
+  answered: "status.decision.answered",
+  applied: "status.decision.applied",
+  approved: "status.decision.approved",
+  rejected: "status.decision.rejected",
+  withdrawn: "status.decision.withdrawn",
+};
+
+const decisionKindKeys: Record<string, TranslationKey> = {
+  decision: "decision.kind.decision",
+  completion: "decision.kind.completion",
+  post_merge: "decision.kind.post_merge",
+};
+
+function localized(key: TranslationKey, locale: Locale): string {
+  return (locale === "ja" ? ja : en)[key];
+}
+
+export function statusLabel(locale: Locale, status: string): string {
+  const key = statusKeys[status];
+  return key ? localized(key, locale) : status;
+}
+
+export function taskStatusLabel(
+  locale: Locale,
+  status: string,
+  openDecisionCount: number,
+  claimedBy?: string | number,
+): string {
+  if (status === "todo" && openDecisionCount > 0) {
+    return localized("status.task.awaitingDecision", locale);
+  }
+  if (status === "todo" && claimedBy) {
+    return localized("status.task.doing", locale);
+  }
+  return statusLabel(locale, status);
+}
+
+export function activeSnoozeUntil(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now() ? value : undefined;
+}
+
+export function decisionKindLabel(locale: Locale, kind: string): string {
+  const key = decisionKindKeys[kind];
+  return key ? localized(key, locale) : kind;
+}
+
+export function decisionSettlementLabel(locale: Locale, settledByDefault: boolean): string | undefined {
+  return settledByDefault ? localized("decision.settledByDefault", locale) : undefined;
+}
+
+export function decisionRecommendationLabel(
+  locale: Locale,
+  defaultOption: string | undefined,
+  optionLabel?: string,
+): string | undefined {
+  if (!defaultOption || (optionLabel !== undefined && optionLabel !== defaultOption)) return undefined;
+  return localized("decision.recommended", locale);
+}
+
+export function decisionAutoSettlementSeconds(defaultAfterMs: number | undefined): number | undefined {
+  if (typeof defaultAfterMs !== "number" || !Number.isFinite(defaultAfterMs) || defaultAfterMs <= 0) return undefined;
+  return Math.max(1, Math.ceil(defaultAfterMs / 1000));
+}

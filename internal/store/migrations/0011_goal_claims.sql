@@ -1,0 +1,2 @@
+ALTER TABLE goals ADD COLUMN claimed_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE goals ADD COLUMN claimed_at TEXT;

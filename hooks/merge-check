@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# Refuse a merge of a goal branch into main that the human has not approved.
+# Unlike the ATCT tool gate this runs on Bash, because the merge is raw git.
+if ! command -v atct >/dev/null 2>&1; then
+  exit 0
+fi
+
+# A gate that cannot run must not let the merge through.
+if ! out="$(atct merge-check --hook-input)"; then
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"ATCT merge-check failed"}}'
+  exit 0
+fi
+printf '%s' "$out"
+exit 0

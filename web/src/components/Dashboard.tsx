@@ -1,0 +1,117 @@
+import { Button } from "@cloudflare/kumo/components/button";
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { fetchInbox, subscribeToDecisionEvents, type InboxResponse } from "../lib/api";
+import { DecisionTable } from "./DecisionTable";
+import { StalledNotice } from "./StalledNotice";
+import { GoalTable } from "./GoalTable";
+import { GoalCreateForm } from "./GoalCreateForm";
+import { ProjectList } from "./ProjectList";
+import { AreaLoading, EmptyState, ErrorState } from "./StateMessage";
+import { Section } from "./Section";
+import { groupGoalsByProject } from "../lib/ui";
+
+type LoadState =
+  | { kind: "loading" }
+  | { kind: "ready"; data: InboxResponse }
+  | { kind: "error"; message: string };
+
+function errorMessage(reason: unknown, fallback: string): string {
+  return reason instanceof Error ? reason.message : fallback;
+}
+
+export function Dashboard() {
+  const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [updatePending, setUpdatePending] = useState(false);
+  const { t } = useTranslation();
+
+  const load = useCallback(async () => {
+    setUpdatePending(false);
+    setState({ kind: "loading" });
+    try {
+      setState({ kind: "ready", data: await fetchInbox() });
+    } catch (reason) {
+      setState({ kind: "error", message: errorMessage(reason, t("dashboard.error.load")) });
+    }
+  }, [t]);
+
+  const handleDecisionEvent = useCallback(() => {
+    setUpdatePending(true);
+  }, []);
+
+  const handleGoalCreated = useCallback(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    void load();
+    const unsubscribe = subscribeToDecisionEvents(handleDecisionEvent);
+    return () => {
+      unsubscribe();
+    };
+  }, [handleDecisionEvent, load]);
+
+  const data = state.kind === "ready" ? state.data : undefined;
+  const projectGroups = data ? groupGoalsByProject(data.active_goals) : undefined;
+  const retry = () => void load();
+
+  return (
+    <main className="space-y-6">
+      <div>
+        <h1 className="font-display text-3xl font-semibold text-ink-950">{t("dashboard.title")}</h1>
+      </div>
+
+      {updatePending && (
+        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-base text-notice-800" role="status" aria-live="polite">
+          <p>{t("state.updateAvailable")}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="focus-ring mt-3 px-3 py-2 text-base font-medium"
+            onClick={() => void load()}
+          >
+            {t("state.fetchLatest")}
+          </Button>
+        </div>
+      )}
+
+      <StalledNotice
+        decisions={(data?.unapplied_decisions ?? []).filter((decision) => decision.stale_unapplied)}
+        projects={data?.stalled_projects ?? []}
+      />
+
+      <div className="space-y-10">
+        <Section id="open-decisions" title={t("dashboard.waiting.title")} count={data?.open_decisions.length}>
+          {state.kind === "loading" && <AreaLoading label={t("dashboard.waiting.title")} />}
+          {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
+          {data && <DecisionTable decisions={data.open_decisions} emptyText={t("dashboard.openDecisions.empty")} />}
+        </Section>
+      </div>
+
+      <Section
+        id="active-goals"
+        title={t("dashboard.goals.title")}
+        count={projectGroups?.length}
+        action={<GoalCreateForm onCreated={handleGoalCreated} />}
+      >
+        {state.kind === "loading" && <AreaLoading label={t("dashboard.goals.title")} />}
+        {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
+        {data && projectGroups && projectGroups.length === 0 && <EmptyState>{t("dashboard.goals.empty")}</EmptyState>}
+        {data && projectGroups && projectGroups.length > 0 && (
+          <div className="space-y-8">
+            {projectGroups.map(([projectName, goals]) => (
+              <div className="space-y-3" key={projectName}>
+                <h3 className="font-display text-base font-semibold text-ink-950">{projectName}</h3>
+                <GoalTable goals={goals} showProject={false} />
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <Section id="projects" title={t("dashboard.projects.title")} hideCount>
+        <ProjectList onChanged={handleGoalCreated} />
+      </Section>
+    </main>
+  );
+}

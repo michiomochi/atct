@@ -1,0 +1,2413 @@
+package httpapi
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os/exec"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/michiomochi/atct-archive/internal/domain"
+	"github.com/michiomochi/atct-archive/internal/store"
+)
+
+const commitDiffBodyLineLimit = 400
+
+type Server struct {
+	store *store.Store
+	// handoffEntryScans counts event-stream scanHandoffEntryRecords calls so tests can pin
+	// that an event stream does not rescan while the entry watermark is flat.
+	handoffEntryScans atomic.Int64
+}
+
+func New(s *store.Store) *Server {
+	return &Server{store: s}
+}
+
+func (s *Server) Handler() http.Handler {
+	return s
+}
+
+type TaskView struct {
+	domain.Task
+	ClaimedBy      int64             `json:"claimed_by"`
+	ClaimedAt      *time.Time        `json:"claimed_at"`
+	HeldForSeconds int64             `json:"held_for_seconds"`
+	OpenDecisions  []domain.Decision `json:"open_decisions"`
+	ProjectID      int64             `json:"project_id"`
+	ProjectName    string            `json:"project_name"`
+}
+
+type goalView struct {
+	domain.Goal
+	AwaitingDecision bool `json:"awaiting_decision"`
+	// AwaitingReview is a goal whose handoff review has been submitted and not
+	// yet received. There is nothing for a human to answer, so it carries no
+	// open decision, and without this the goal looked the same as one nobody
+	// had picked up.
+	AwaitingReview bool             `json:"awaiting_review"`
+	NextAction     store.NextAction `json:"next_action"`
+	ProjectName    string           `json:"project_name"`
+	// ProjectArchived is set on the goal detail so the page can say why changes are refused.
+	ProjectArchived bool       `json:"project_archived"`
+	Tasks           []TaskView `json:"tasks"`
+}
+
+type goalTaskCommitsView struct {
+	TaskID    int64            `json:"task_id"`
+	TaskTitle string           `json:"task_title"`
+	Commits   []taskCommitView `json:"commits"`
+}
+
+type decisionView struct {
+	domain.Decision
+	ProjectID        int64  `json:"project_id"`
+	ProjectName      string `json:"project_name"`
+	GoalHeadline     string `json:"goal_headline"`
+	DefaultOption    string `json:"default_option"`
+	DefaultAfterMs   *int64 `json:"default_after_ms,omitempty"`
+	SettledByDefault bool   `json:"settled_by_default"`
+	// Set on open_decisions only; see domain.DecisionPriority.
+	Priority       int    `json:"priority,omitempty"`
+	PriorityReason string `json:"priority_reason,omitempty"`
+	// Set on unapplied_decisions only: answered for longer than
+	// store.AnsweredUnappliedAfter while its goal is active. OwnerLastSeenAt is
+	// the owner's latest subcommander heartbeat, when there is one.
+	StaleUnapplied  bool       `json:"stale_unapplied,omitempty"`
+	OwnerLastSeenAt *time.Time `json:"owner_last_seen_at,omitempty"`
+}
+
+// stalledProject is a project with active goals whose monitors have gone quiet
+// for store.ProjectSilentAfter. LastSeenAt is nil when no monitor ever ran.
+type stalledProject struct {
+	ProjectID   int64      `json:"project_id"`
+	ProjectName string     `json:"project_name"`
+	LastSeenAt  *time.Time `json:"last_seen_at"`
+}
+
+type inboxResponse struct {
+	OpenDecisions      []decisionView   `json:"open_decisions"`
+	UnappliedDecisions []decisionView   `json:"unapplied_decisions"`
+	ActiveGoals        []goalView       `json:"active_goals"`
+	AttentionTasks     []TaskView       `json:"attention_tasks"`
+	StalledProjects    []stalledProject `json:"stalled_projects"`
+}
+
+type workflowReconciliationResponse struct {
+	store.WorkflowReconciliation
+	MonitorLastReconciledAt *string `json:"monitor_last_reconciled_at,omitempty"`
+}
+
+type goalResponse struct {
+	Goal                   goalView              `json:"goal"`
+	DerivedFrom            *taskGoalView         `json:"derived_from,omitempty"`
+	DerivedGoals           []taskGoalView        `json:"derived_goals"`
+	Now                    []TaskView            `json:"now"`
+	NeedsDecision          []TaskView            `json:"needs_decision"`
+	UnattachedDecisions    []domain.Decision     `json:"unattached_decisions"`
+	Next                   []TaskView            `json:"next"`
+	TaskCommits            []goalTaskCommitsView `json:"task_commits"`
+	DecisionHistory        []decisionHistoryView `json:"decision_history"`
+	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
+	Handoffs               []HandoffView         `json:"handoffs"`
+}
+
+type taskGoalView struct {
+	ID          int64  `json:"id"`
+	Headline    string `json:"headline"`
+	ProjectName string `json:"project_name"`
+}
+
+type taskDetailResponse struct {
+	Task                   domain.Task           `json:"task"`
+	Goal                   taskGoalView          `json:"goal"`
+	OpenDecisions          []domain.Decision     `json:"open_decisions"`
+	DecisionHistory        []decisionHistoryView `json:"decision_history"`
+	DecisionHistoryOmitted int                   `json:"decision_history_omitted"`
+	Commits                []taskCommitView      `json:"commits"`
+	Handoffs               []HandoffView         `json:"handoffs"`
+}
+
+type decisionHistoryView struct {
+	DecisionID       int64      `json:"decision_id"`
+	TaskID           int64      `json:"task_id"`
+	Question         string     `json:"question"`
+	AnswerLabel      string     `json:"answer_label"`
+	AnswerText       string     `json:"answer_text"`
+	SettledByDefault bool       `json:"settled_by_default"`
+	DefaultAppliedAt *time.Time `json:"default_applied_at"`
+	AnsweredAt       *time.Time `json:"answered_at"`
+	AppliedAt        *time.Time `json:"applied_at"`
+	AnsweredVia      string     `json:"answered_via"`
+	AnswerQuote      string     `json:"answer_quote"`
+	AnswerEvidence   string     `json:"answer_evidence"`
+}
+
+type taskCommitView struct {
+	SHA          string    `json:"sha"`
+	ShortSHA     string    `json:"short_sha"`
+	Subject      string    `json:"subject"`
+	FilesChanged int       `json:"files_changed"`
+	Insertions   int       `json:"insertions"`
+	Deletions    int       `json:"deletions"`
+	InHistory    bool      `json:"in_history"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type taskCommitDiffView struct {
+	SHA          string               `json:"sha"`
+	InHistory    bool                 `json:"in_history"`
+	Files        []taskCommitDiffFile `json:"files"`
+	Body         string               `json:"body"`
+	OmittedLines int                  `json:"omitted_lines"`
+}
+
+type taskCommitDiffFile struct {
+	Path       string `json:"path"`
+	Insertions int    `json:"insertions"`
+	Deletions  int    `json:"deletions"`
+	Binary     bool   `json:"binary"`
+}
+
+type answerRequest struct {
+	AnswerLabel string `json:"answer_label"`
+	AnswerText  string `json:"answer_text"`
+}
+
+type reviseDecisionRequest struct {
+	Options []domain.Option `json:"options"`
+}
+
+type rejectionRequest struct {
+	Reason string `json:"reason"`
+}
+
+type snoozeRequest struct {
+	SnoozedUntil *string `json:"snoozed_until"`
+}
+
+type setGoalDerivedFromRequest struct {
+	DerivedFromGoalID inputID `json:"derived_from_goal_id"`
+}
+
+type createGoalRequest struct {
+	ProjectID inputID `json:"project_id"`
+	Content   string  `json:"content"`
+	Creator   string  `json:"creator"`
+}
+
+type uiSettingsResponse struct {
+	Locale string `json:"locale"`
+}
+
+// inputID accepts canonical numeric IDs and preserves string input so removed
+// UUID-style IDs can receive migration guidance from the store resolver.
+type inputID string
+
+func (id *inputID) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*id = inputID(text)
+		return nil
+	}
+	var number int64
+	if err := json.Unmarshal(data, &number); err != nil {
+		return err
+	}
+	*id = inputID(strconv.FormatInt(number, 10))
+	return nil
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	if s.rejectArchivedWrite(w, r, parts) {
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "ui-settings" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleUISettings(w, r)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "ui-settings" && parts[2] == "locale" {
+		if r.Method != http.MethodPut {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleUILocale(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "inbox" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleInbox(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "monitor-health" {
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleMonitorHealth(w, r)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "monitor-bindings" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleMonitorBinding(w, r, parts[2])
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "events" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleEvents(w, r)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "events" && parts[2] == "reconcile" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleEventReconciliation(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "ws" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleWebSocketEvents(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "projects" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleProjects(w, r)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "projects" && (parts[2] == "archive" || parts[2] == "unarchive") {
+		writeError(w, http.StatusBadRequest, "project id is missing")
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "projects" && (parts[3] == "archive" || parts[3] == "unarchive") {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleArchiveProject(w, r, parts[2], parts[3] == "archive")
+		return
+	}
+	if len(parts) == 2 && parts[0] == "api" && parts[1] == "goals" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleCreateGoal(w, r)
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "handoffs" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleGoalHandoffs(w, r, parts[2], "")
+		return
+	}
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "handoffs" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "goal handoff path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleGoalHandoffs(w, r, parts[2], parts[4])
+		return
+	}
+	if len(parts) == 6 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "handoffs" && parts[5] == "history" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "goal handoff history path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleGoalHandoffs(w, r, parts[2], parts[4])
+		return
+	}
+
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "goals" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleGoal(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "withdraw" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleWithdraw(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "derived-from" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleSetGoalDerivedFrom(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "goals" && parts[3] == "diff" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "goal id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleGoalDiff(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && (parts[1] == "goals" || parts[1] == "tasks") && parts[3] == "review-exchanges" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, parts[1][:len(parts[1])-1]+" id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		if parts[1] == "goals" {
+			s.handleReviewExchanges(w, r, parts[2], "")
+		} else {
+			s.handleReviewExchanges(w, r, "", parts[2])
+		}
+		return
+	}
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "tasks" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "task id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTask(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "handoffs" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "task id is missing")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTaskHandoffs(w, r, parts[2], "")
+		return
+	}
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "handoffs" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "task handoff path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTaskHandoffs(w, r, parts[2], parts[4])
+		return
+	}
+	if len(parts) == 6 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "handoffs" && parts[5] == "history" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "task handoff history path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTaskHandoffs(w, r, parts[2], parts[4])
+		return
+	}
+	if len(parts) == 6 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "commits" && parts[5] == "diff" {
+		if parts[2] == "" || parts[4] == "" {
+			writeError(w, http.StatusBadRequest, "task commit path is malformed")
+			return
+		}
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleTaskCommitDiff(w, r, parts[2], parts[4])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "release" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "task id is missing")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleRelease(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[3] == "snooze" {
+		if parts[2] == "" {
+			writeError(w, http.StatusBadRequest, "task id is missing")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleSnooze(w, r, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "decisions" {
+		if parts[2] == "" || parts[3] == "" {
+			writeError(w, http.StatusBadRequest, "decision path is malformed")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusBadRequest, "method is not allowed for this endpoint")
+			return
+		}
+		s.handleDecision(w, r, parts[2], parts[3])
+		return
+	}
+
+	if malformedAPIPath(r.URL.Path) {
+		writeError(w, http.StatusBadRequest, "api path is malformed")
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		writeError(w, http.StatusNotFound, "endpoint not found")
+		return
+	}
+	writeError(w, http.StatusNotFound, "endpoint not found")
+}
+
+func malformedAPIPath(path string) bool {
+	for _, prefix := range []string{"/api/inbox", "/api/ui-settings", "/api/monitor-health", "/api/events", "/api/ws", "/api/watch", "/api/projects", "/api/goals", "/api/tasks", "/api/decisions"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) handleUISettings(w http.ResponseWriter, r *http.Request) {
+	locale, err := s.store.GetUILocale(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, uiSettingsResponse{Locale: locale})
+}
+
+func (s *Server) handleUILocale(w http.ResponseWriter, r *http.Request) {
+	var request uiSettingsResponse
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if request.Locale == "" {
+		writeError(w, http.StatusBadRequest, "locale is required")
+		return
+	}
+	if err := s.store.SetUILocale(r.Context(), request.Locale); err != nil {
+		if errors.Is(err, store.ErrUnsupportedUILocale) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, uiSettingsResponse{Locale: request.Locale})
+}
+
+func (s *Server) handleMonitorHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s.handleMonitorHealthList(w, r)
+		return
+	}
+
+	var health store.MonitorHealth
+	if err := decodeJSONBody(r, &health); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := validateMonitorHealthScope(s, r.Context(), health); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if health.State == "stopped" {
+		when := time.Now().UTC()
+		if health.StoppedAt != nil {
+			when = health.StoppedAt.UTC()
+		}
+		if err := s.store.StopMonitorHealth(r.Context(), health.MonitorID, when); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusBadRequest, "monitor health row does not exist")
+				return
+			}
+			writeStoreError(w, err)
+			return
+		}
+		health.StoppedAt = &when
+		health.TransitionedAt = when
+		health.LastSeenAt = when
+		writeJSON(w, http.StatusOK, health)
+		return
+	}
+	if health.State != "healthy" && health.State != "recovering" && health.State != "degraded" && health.State != "rearming" {
+		writeError(w, http.StatusBadRequest, "monitor state is invalid")
+		return
+	}
+	if err := s.store.UpsertMonitorHealth(r.Context(), health); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, health)
+}
+
+func (s *Server) handleMonitorBinding(w http.ResponseWriter, r *http.Request, token string) {
+	// The monitor polls this every second and cannot do its job without it, so
+	// the poll is the heartbeat: there is no separate call to forget to make.
+	// A lapsed lease then means the monitor process is gone, which is the one
+	// thing a session's liveness ever meant.
+	if err := s.store.RenewMonitorLease(r.Context(), token); err != nil && !errors.Is(err, store.ErrMonitorBindingNotFound) {
+		writeStoreError(w, err)
+		return
+	}
+	binding, err := s.store.MonitorBinding(r.Context(), token)
+	if errors.Is(err, store.ErrMonitorBindingNotFound) {
+		writeJSON(w, http.StatusOK, store.MonitorBinding{Pending: true})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, binding)
+}
+
+func validateMonitorHealthScope(s *Server, ctx context.Context, health store.MonitorHealth) error {
+	if health.Role != "commander" && health.Role != "subcommander" && health.Role != "executor" {
+		return fmt.Errorf("monitor role %q is not eligible", health.Role)
+	}
+	if health.ProjectID <= 0 {
+		return errors.New("project_id is required")
+	}
+	if health.Role == "commander" {
+		if health.GoalID != nil || health.TaskID != nil {
+			return errors.New("commander monitor cannot carry goal or task selector")
+		}
+	} else if health.GoalID == nil {
+		return errors.New("project_id and goal_id are required")
+	}
+	if health.Role == "subcommander" && health.TaskID != nil {
+		return errors.New("subcommander monitor cannot carry task selector")
+	}
+	if health.Role == "executor" && health.TaskID == nil {
+		return errors.New("executor monitor requires task selector")
+	}
+	filter := eventFilter{canonicalProjectID: health.ProjectID}
+	if health.GoalID != nil {
+		filter.canonicalGoalID = *health.GoalID
+	}
+	if health.TaskID != nil {
+		filter.canonicalTaskID = *health.TaskID
+	}
+	projectID, goalID, taskID, err := s.eventScopeIDs(ctx, filter)
+	if err != nil {
+		return err
+	}
+	if projectID != health.ProjectID || (health.GoalID != nil && goalID != *health.GoalID) || (health.TaskID != nil && taskID != *health.TaskID) {
+		return errors.New("monitor selector does not match its canonical scope")
+	}
+	if health.MonitorID != store.MonitorHealthID(health.CWD, health.Role, health.ProjectID, health.GoalID, health.TaskID, health.PID, health.ProcessStartedAt, health.ScopeKey) {
+		return errors.New("monitor identity does not match its process and scope")
+	}
+	if health.PID <= 0 || health.ProcessStartedAt.IsZero() || strings.TrimSpace(health.CWD) == "" {
+		return errors.New("monitor cwd, pid, and process start are required")
+	}
+	return nil
+}
+
+func (s *Server) handleMonitorHealthList(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	projectID, err := parsePositiveMonitorHealthID(query.Get("project_id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "project_id is required")
+		return
+	}
+	filter := eventFilter{canonicalProjectID: projectID}
+	if value := query.Get("goal_id"); value != "" {
+		filter.canonicalGoalID, err = parsePositiveMonitorHealthID(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "goal_id is invalid")
+			return
+		}
+	}
+	if value := query.Get("task_id"); value != "" {
+		filter.canonicalTaskID, err = parsePositiveMonitorHealthID(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "task_id is invalid")
+			return
+		}
+	}
+	resolvedProjectID, goalID, taskID, err := s.eventScopeIDs(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rows, err := s.store.ListMonitorHealth(r.Context(), resolvedProjectID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	filtered := make([]store.MonitorHealth, 0, len(rows))
+	for _, row := range rows {
+		if filter.canonicalGoalID != 0 && (row.GoalID == nil || *row.GoalID != goalID) {
+			continue
+		}
+		if filter.canonicalTaskID != 0 && (row.TaskID == nil || *row.TaskID != taskID) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	writeJSON(w, http.StatusOK, filtered)
+}
+
+func parsePositiveMonitorHealthID(value string) (int64, error) {
+	id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, errors.New("id must be positive")
+	}
+	return id, nil
+}
+
+func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
+	projects, err := s.store.ListProjects(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if projects == nil {
+		projects = []domain.Project{}
+	}
+	writeJSON(w, http.StatusOK, projects)
+}
+
+func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
+	var request createGoalRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(string(request.ProjectID)) == "" {
+		writeError(w, http.StatusBadRequest, "project_id is required")
+		return
+	}
+	if strings.TrimSpace(request.Content) == "" {
+		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+
+	projectID, ok := s.resolveProjectID(w, r.Context(), string(request.ProjectID))
+	if !ok {
+		return
+	}
+
+	if err := s.store.EnsureProjectActive(r.Context(), projectID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	goal, err := s.store.CreateGoal(r.Context(), projectID, request.Content, request.Creator)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, goal)
+}
+
+func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	goals, err := s.store.ListAllGoalsForInbox(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	openDecisions, err := s.store.ListAllOpenDecisions(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	unapplied, err := s.store.ListUnappliedDecisions(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projectNames := make(map[int64]string, len(projects))
+	for _, project := range projects {
+		projectNames[project.ID] = project.Name
+	}
+	goalProjectIDs := make(map[int64]int64, len(goals))
+	goalProjectNames := make(map[int64]string, len(goals))
+	goalHeadlines := make(map[int64]string, len(goals))
+	for _, goal := range goals {
+		goalProjectIDs[goal.ID] = goal.ProjectID
+		goalProjectNames[goal.ID] = projectNames[goal.ProjectID]
+		goalHeadlines[goal.ID] = domain.Headline(goal.Content)
+	}
+
+	openByTask := indexDecisions(openDecisions)
+	openByGoal := make(map[int64]bool, len(openDecisions))
+	for _, decision := range openDecisions {
+		openByGoal[decision.GoalID] = true
+	}
+	openDecisionViews := make([]decisionView, 0, len(openDecisions))
+	for _, decision := range openDecisions {
+		openDecisionViews = append(openDecisionViews, decisionView{
+			Decision:         decision,
+			ProjectID:        goalProjectIDs[decision.GoalID],
+			ProjectName:      goalProjectNames[decision.GoalID],
+			GoalHeadline:     goalHeadlines[decision.GoalID],
+			DefaultOption:    decision.DefaultOption,
+			DefaultAfterMs:   decision.DefaultAfterMs,
+			SettledByDefault: decision.DefaultAppliedAt != nil,
+		})
+	}
+	// Monitor history is read once per project; the stale check and the stalled
+	// check both use it.
+	monitorHistory := make(map[int64][]store.MonitorHealth)
+	historyOf := func(projectID int64) ([]store.MonitorHealth, error) {
+		if h, ok := monitorHistory[projectID]; ok {
+			return h, nil
+		}
+		h, err := s.store.ListMonitorHealthHistory(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		monitorHistory[projectID] = h
+		return h, nil
+	}
+	goalActive := make(map[int64]bool, len(goals))
+	for _, goal := range goals {
+		goalActive[goal.ID] = goal.Status == domain.GoalActive
+	}
+	now := time.Now()
+	unappliedDecisionViews := make([]decisionView, 0, len(unapplied))
+	for _, decision := range unapplied {
+		view := decisionView{
+			Decision:         decision,
+			ProjectID:        goalProjectIDs[decision.GoalID],
+			ProjectName:      goalProjectNames[decision.GoalID],
+			GoalHeadline:     goalHeadlines[decision.GoalID],
+			DefaultOption:    decision.DefaultOption,
+			DefaultAfterMs:   decision.DefaultAfterMs,
+			SettledByDefault: decision.DefaultAppliedAt != nil,
+		}
+		if goalActive[decision.GoalID] && decision.Kind != domain.KindGoalReview && decision.AnsweredAt != nil &&
+			now.Sub(*decision.AnsweredAt) > store.AnsweredUnappliedAfter {
+			view.StaleUnapplied = true
+			history, err := historyOf(view.ProjectID)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			if seen, ok := store.MonitorLastSeenAt(history, decision.GoalID); ok {
+				view.OwnerLastSeenAt = &seen
+			}
+		}
+		unappliedDecisionViews = append(unappliedDecisionViews, view)
+	}
+	activeGoals := make([]goalView, 0)
+	attentionTasks := make([]TaskView, 0)
+	taskStatus := make(map[int64]domain.TaskStatus)
+	var activeGoalList []domain.Goal
+	for _, goal := range goals {
+		if goal.Status == domain.GoalActive {
+			activeGoalList = append(activeGoalList, goal)
+		}
+	}
+	nextActions, err := s.store.GoalNextActions(ctx, activeGoalList)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	awaitingReviews, err := s.store.GoalsAwaitingHandoffReview(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	tasksByGoal, err := s.store.ListTasksForAllGoals(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	handoffs, err := s.store.ListOpenTaskHandoffsForAllGoals(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	for _, goal := range goals {
+		tasks := tasksByGoal[goal.ID]
+		for _, task := range tasks {
+			taskStatus[task.ID] = task.Status
+		}
+		if goal.Status == domain.GoalActive {
+			goalTasks := append([]domain.Task(nil), tasks...)
+			for i := 1; i < len(goalTasks); i++ {
+				for j := i; j > 0 && goalTasks[j].Order < goalTasks[j-1].Order; j-- {
+					goalTasks[j], goalTasks[j-1] = goalTasks[j-1], goalTasks[j]
+				}
+			}
+			taskViews := make([]TaskView, 0, len(goalTasks))
+			for _, task := range goalTasks {
+				taskViews = append(taskViews, newTaskView(task, handoffs[task.ID], openByTask[task.ID]))
+			}
+			activeGoals = append(activeGoals, goalView{
+				Goal:             goal,
+				AwaitingDecision: openByGoal[goal.ID],
+				AwaitingReview:   awaitingReviews[goal.ID],
+				NextAction:       nextActions[goal.ID],
+				ProjectName:      projectNames[goal.ProjectID],
+				Tasks:            taskViews,
+			})
+		}
+		for _, task := range tasks {
+			decisions := openByTask[task.ID]
+			if len(decisions) == 0 || !isProjectableTask(task.Status) {
+				continue
+			}
+			taskView := newTaskView(task, handoffs[task.ID], decisions)
+			taskView.ProjectID = goal.ProjectID
+			taskView.ProjectName = projectNames[goal.ProjectID]
+			attentionTasks = append(attentionTasks, taskView)
+		}
+	}
+
+	for i := range openDecisionViews {
+		v := &openDecisionViews[i]
+		status, hasTask := taskStatus[v.TaskID]
+		v.Priority, v.PriorityReason = domain.DecisionPriority(v.Kind, status, v.TaskID != 0 && hasTask, v.DefaultAfterMs != nil)
+	}
+	sort.SliceStable(openDecisionViews, func(i, j int) bool {
+		a, b := openDecisionViews[i], openDecisionViews[j]
+		if a.Priority != b.Priority {
+			return a.Priority < b.Priority
+		}
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.ID < b.ID
+	})
+
+	activeProjects := make(map[int64]bool)
+	for _, goal := range goals {
+		if goal.Status == domain.GoalActive {
+			activeProjects[goal.ProjectID] = true
+		}
+	}
+	stalledProjects := make([]stalledProject, 0)
+	for _, project := range projects {
+		if project.ArchivedAt != nil || !activeProjects[project.ID] {
+			continue
+		}
+		history, err := historyOf(project.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		seen, ok := store.MonitorLastSeenAt(history, 0)
+		if ok && time.Since(seen) <= store.ProjectSilentAfter {
+			continue
+		}
+		stalled := stalledProject{ProjectID: project.ID, ProjectName: project.Name}
+		if ok {
+			stalled.LastSeenAt = &seen
+		}
+		stalledProjects = append(stalledProjects, stalled)
+	}
+
+	writeJSON(w, http.StatusOK, inboxResponse{
+		OpenDecisions:      openDecisionViews,
+		UnappliedDecisions: unappliedDecisionViews,
+		ActiveGoals:        activeGoals,
+		AttentionTasks:     nonNilTaskViews(attentionTasks),
+		StalledProjects:    stalledProjects,
+	})
+}
+
+func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, goalID string) {
+	ctx := r.Context()
+	canonicalGoalID, ok := s.resolveGoalID(w, ctx, goalID)
+	if !ok {
+		return
+	}
+	goal, err := s.store.GetGoal(ctx, canonicalGoalID)
+	if errors.Is(err, store.ErrGoalNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projectName := ""
+	projectRootPath := ""
+	projectArchived := false
+	projectNames := make(map[int64]string, len(projects))
+	for _, project := range projects {
+		projectNames[project.ID] = project.Name
+		if project.ID == goal.ProjectID {
+			projectName = project.Name
+			projectArchived = project.ArchivedAt != nil
+			projectRootPath = project.RootPath
+		}
+	}
+	var derivedFrom *taskGoalView
+	if goal.DerivedFromGoalID != 0 {
+		parent, err := s.store.GetGoal(ctx, goal.DerivedFromGoalID)
+		if err == nil {
+			view := newGoalLineageView(parent, projectNames[parent.ProjectID])
+			derivedFrom = &view
+		} else if !errors.Is(err, store.ErrGoalNotFound) {
+			writeStoreError(w, err)
+			return
+		}
+	}
+	derivedGoals, err := s.store.ListDerivedGoals(ctx, goal.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	derivedGoalViews := make([]taskGoalView, 0, len(derivedGoals))
+	for _, derivedGoal := range derivedGoals {
+		derivedGoalViews = append(derivedGoalViews, newGoalLineageView(derivedGoal, projectNames[derivedGoal.ProjectID]))
+	}
+	tasks, err := s.store.ListTasks(ctx, canonicalGoalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	handoffs, err := s.store.ListOpenTaskHandoffsForGoal(ctx, canonicalGoalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	openDecisions, err := s.store.ListOpenDecisions(ctx, canonicalGoalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	appliedDecisions, decisionHistoryOmitted, err := s.store.ListAppliedDecisions(ctx, canonicalGoalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	goalHandoffs, err := s.listGoalHandoffViews(ctx, canonicalGoalID, goal.ProjectID, 0, store.HandoffHistoryMaxLimit)
+	if err != nil {
+		writeHandoffHistoryError(w, err)
+		return
+	}
+	decisionHistory := make([]decisionHistoryView, 0, len(appliedDecisions))
+	for _, decision := range appliedDecisions {
+		decisionHistory = append(decisionHistory, newDecisionHistoryView(decision))
+	}
+	openByTask := indexDecisions(openDecisions)
+	unattachedDecisions := make([]domain.Decision, 0)
+	for _, decision := range openDecisions {
+		if decision.TaskID == 0 {
+			unattachedDecisions = append(unattachedDecisions, decision)
+		}
+	}
+
+	nextAction, err := s.store.GoalNextAction(ctx, goal)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	allTaskViews := make([]TaskView, 0, len(tasks))
+	response := goalResponse{
+		Goal:                   goalView{Goal: goal, NextAction: nextAction, ProjectName: projectName, ProjectArchived: projectArchived},
+		DerivedFrom:            derivedFrom,
+		DerivedGoals:           derivedGoalViews,
+		Now:                    make([]TaskView, 0),
+		NeedsDecision:          make([]TaskView, 0),
+		UnattachedDecisions:    unattachedDecisions,
+		Next:                   make([]TaskView, 0),
+		TaskCommits:            make([]goalTaskCommitsView, 0),
+		DecisionHistory:        decisionHistory,
+		DecisionHistoryOmitted: decisionHistoryOmitted,
+		Handoffs:               goalHandoffs,
+	}
+	for _, task := range tasks {
+		decisions := openByTask[task.ID]
+		view := newTaskView(task, handoffs[task.ID], decisions)
+		allTaskViews = append(allTaskViews, view)
+		linkedCommits, err := s.store.ListTaskCommits(ctx, task.ID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if len(linkedCommits) > 0 {
+			commits := make([]taskCommitView, 0, len(linkedCommits))
+			for _, commit := range linkedCommits {
+				commits = append(commits, newTaskCommitView(ctx, projectRootPath, commit))
+			}
+			response.TaskCommits = append(response.TaskCommits, goalTaskCommitsView{
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				Commits:   commits,
+			})
+		}
+		switch {
+		case len(decisions) > 0 && isProjectableTask(task.Status):
+			response.NeedsDecision = append(response.NeedsDecision, view)
+		case task.Status == domain.TaskStatus("doing"):
+			response.Now = append(response.Now, view)
+		case task.Status == domain.TaskStatus("todo"):
+			response.Next = append(response.Next, view)
+		}
+	}
+	response.Goal.Tasks = nonNilTaskViews(allTaskViews)
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// goalAwaitsHandoffReview reports a submitted review that nobody has received
+// yet, for the goal's own handoff or for its plan.
+func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, goalID string) {
+	var request rejectionRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(request.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+
+	canonicalGoalID, ok := s.resolveGoalID(w, r.Context(), goalID)
+	if !ok {
+		return
+	}
+	if err := s.store.WithdrawActiveGoal(r.Context(), canonicalGoalID, request.Reason); err != nil {
+		if errors.Is(err, store.ErrGoalNotActive) {
+			goal, goalErr := s.store.GetGoal(r.Context(), canonicalGoalID)
+			if errors.Is(goalErr, store.ErrGoalNotFound) {
+				writeError(w, http.StatusNotFound, goalErr.Error())
+				return
+			}
+			if goalErr != nil {
+				writeStoreError(w, goalErr)
+				return
+			}
+			writeError(w, http.StatusConflict, fmt.Sprintf("goal %s is %s, not active", goalID, goal.Status))
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+
+	goal, err := s.store.GetGoal(r.Context(), canonicalGoalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, goal)
+}
+
+func (s *Server) handleSetGoalDerivedFrom(w http.ResponseWriter, r *http.Request, goalID string) {
+	var request setGoalDerivedFromRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	canonicalGoalID, ok := s.resolveGoalID(w, r.Context(), goalID)
+	if !ok {
+		return
+	}
+	derivedFromID, ok := s.resolveGoalID(w, r.Context(), string(request.DerivedFromGoalID))
+	if !ok {
+		return
+	}
+	err := s.store.SetGoalDerivedFrom(r.Context(), canonicalGoalID, derivedFromID)
+	if errors.Is(err, store.ErrGoalNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrGoalSelfReference) || errors.Is(err, store.ErrGoalDerivationCycle) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	goal, err := s.store.GetGoal(r.Context(), canonicalGoalID)
+	if errors.Is(err, store.ErrGoalNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, goal)
+}
+
+func (s *Server) handleTask(w http.ResponseWriter, r *http.Request, taskID string) {
+	ctx := r.Context()
+	canonicalTaskID, ok := s.resolveTaskID(w, ctx, taskID)
+	if !ok {
+		return
+	}
+	goalID, err := s.store.GetTaskGoalID(ctx, canonicalTaskID)
+	if err != nil {
+		if errors.Is(err, store.ErrTaskNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+
+	var task domain.Task
+	goal, err := s.store.GetGoal(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	tasks, err := s.store.ListTasks(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	found := false
+	for _, candidateTask := range tasks {
+		if candidateTask.ID != canonicalTaskID {
+			continue
+		}
+		task = candidateTask
+		found = true
+		break
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, store.ErrTaskNotFound.Error())
+		return
+	}
+
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projectName := ""
+	projectRootPath := ""
+	for _, project := range projects {
+		if project.ID == goal.ProjectID {
+			projectName = project.Name
+			projectRootPath = project.RootPath
+			break
+		}
+	}
+
+	openDecisions, err := s.store.ListOpenDecisions(ctx, goal.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	taskOpenDecisions := make([]domain.Decision, 0)
+	for _, decision := range openDecisions {
+		if decision.TaskID == task.ID {
+			taskOpenDecisions = append(taskOpenDecisions, decision)
+		}
+	}
+
+	appliedDecisions, decisionHistoryOmitted, err := s.store.ListAppliedDecisionsForTask(ctx, goal.ID, task.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	decisionHistory := make([]decisionHistoryView, 0)
+	for _, decision := range appliedDecisions {
+		decisionHistory = append(decisionHistory, newDecisionHistoryView(decision))
+	}
+
+	linkedCommits, err := s.store.ListTaskCommits(ctx, task.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	commits := make([]taskCommitView, 0, len(linkedCommits))
+	for _, commit := range linkedCommits {
+		commits = append(commits, newTaskCommitView(ctx, projectRootPath, commit))
+	}
+	taskHandoffs, err := s.listTaskHandoffViews(ctx, canonicalTaskID, goal.ID, goal.ProjectID, 0, store.HandoffHistoryMaxLimit)
+	if err != nil {
+		writeHandoffHistoryError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, taskDetailResponse{
+		Task: task,
+		Goal: taskGoalView{
+			ID:          goal.ID,
+			Headline:    domain.Headline(goal.Content),
+			ProjectName: projectName,
+		},
+		OpenDecisions:          taskOpenDecisions,
+		DecisionHistory:        decisionHistory,
+		DecisionHistoryOmitted: decisionHistoryOmitted,
+		Commits:                commits,
+		Handoffs:               taskHandoffs,
+	})
+}
+
+func (s *Server) handleTaskCommitDiff(w http.ResponseWriter, r *http.Request, taskID, sha string) {
+	ctx := r.Context()
+	canonicalTaskID, ok := s.resolveTaskID(w, ctx, taskID)
+	if !ok {
+		return
+	}
+	goalID, err := s.store.GetTaskGoalID(ctx, canonicalTaskID)
+	if errors.Is(err, store.ErrTaskNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	linkedCommits, err := s.store.ListTaskCommits(ctx, canonicalTaskID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	var linkedCommit domain.TaskCommit
+	found := false
+	for _, commit := range linkedCommits {
+		if commit.SHA != sha {
+			continue
+		}
+		linkedCommit = commit
+		found = true
+		break
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "commit is not linked to this task")
+		return
+	}
+
+	goal, err := s.store.GetGoal(ctx, goalID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projects, err := s.store.ListProjects(ctx)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	projectRootPath := ""
+	for _, project := range projects {
+		if project.ID == goal.ProjectID {
+			projectRootPath = project.RootPath
+			break
+		}
+	}
+
+	inHistory := gitCommitInHistory(ctx, projectRootPath, linkedCommit.SHA)
+	response := taskCommitDiffView{
+		SHA:       linkedCommit.SHA,
+		InHistory: inHistory,
+		Files:     make([]taskCommitDiffFile, 0),
+	}
+	if !inHistory {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	numstatOutput, err := exec.CommandContext(ctx, "git", "-C", projectRootPath, "show", "--numstat", "--format=", linkedCommit.SHA).Output()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("commit diff files could not be read: %v", err))
+		return
+	}
+	response.Files, err = parseTaskCommitDiffNumstat(string(numstatOutput))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	diffOutput, err := exec.CommandContext(ctx, "git", "-C", projectRootPath, "show", "--format=", linkedCommit.SHA).Output()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("commit diff body could not be read: %v", err))
+		return
+	}
+	response.Body, response.OmittedLines = truncateCommitDiffBody(string(diffOutput))
+	writeJSON(w, http.StatusOK, response)
+}
+
+func parseTaskCommitDiffNumstat(output string) ([]taskCommitDiffFile, error) {
+	files := make([]taskCommitDiffFile, 0)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("invalid numstat line: %q", line)
+		}
+
+		file := taskCommitDiffFile{Path: fields[2]}
+		if fields[0] == "-" && fields[1] == "-" {
+			file.Binary = true
+			files = append(files, file)
+			continue
+		}
+		insertions, err := strconv.Atoi(fields[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid insertion count %q: %w", fields[0], err)
+		}
+		deletions, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid deletion count %q: %w", fields[1], err)
+		}
+		file.Insertions = insertions
+		file.Deletions = deletions
+		files = append(files, file)
+	}
+	return files, nil
+}
+
+func truncateCommitDiffBody(body string) (string, int) {
+	lines := strings.SplitAfter(body, "\n")
+	if len(lines) <= commitDiffBodyLineLimit {
+		return body, 0
+	}
+	return strings.Join(lines[:commitDiffBodyLineLimit], ""), len(lines) - commitDiffBodyLineLimit
+}
+
+func gitCommitInHistory(ctx context.Context, rootPath, sha string) bool {
+	if rootPath == "" || sha == "" {
+		return false
+	}
+	return exec.CommandContext(ctx, "git", "-C", rootPath, "cat-file", "-e", sha+"^{commit}").Run() == nil
+}
+
+func newGoalLineageView(goal domain.Goal, projectName string) taskGoalView {
+	return taskGoalView{
+		ID:          goal.ID,
+		Headline:    domain.Headline(goal.Content),
+		ProjectName: projectName,
+	}
+}
+
+func newTaskCommitView(ctx context.Context, rootPath string, commit domain.TaskCommit) taskCommitView {
+	shortSHA := commit.SHA
+	if len(shortSHA) > 7 {
+		shortSHA = shortSHA[:7]
+	}
+	return taskCommitView{
+		SHA:          commit.SHA,
+		ShortSHA:     shortSHA,
+		Subject:      commit.Subject,
+		FilesChanged: commit.FilesChanged,
+		Insertions:   commit.Insertions,
+		Deletions:    commit.Deletions,
+		InHistory:    gitCommitInHistory(ctx, rootPath, commit.SHA),
+		CreatedAt:    commit.CreatedAt,
+	}
+}
+
+func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request, taskID string) {
+	canonicalTaskID, ok := s.resolveTaskID(w, r.Context(), taskID)
+	if !ok {
+		return
+	}
+	task, err := s.store.ReleaseTaskForHuman(r.Context(), canonicalTaskID)
+	if err != nil {
+		if errors.Is(err, store.ErrTaskNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
+func (s *Server) handleSnooze(w http.ResponseWriter, r *http.Request, taskID string) {
+	var request snoozeRequest
+	if err := decodeJSONBody(r, &request); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	var snoozedUntil *time.Time
+	if request.SnoozedUntil != nil && *request.SnoozedUntil != "" {
+		parsed, err := time.Parse(time.RFC3339, *request.SnoozedUntil)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "snoozed_until must be RFC3339")
+			return
+		}
+		snoozedUntil = &parsed
+	}
+
+	canonicalTaskID, ok := s.resolveTaskID(w, r.Context(), taskID)
+	if !ok {
+		return
+	}
+	task, err := s.store.SnoozeTask(r.Context(), canonicalTaskID, snoozedUntil)
+	if err != nil {
+		if errors.Is(err, store.ErrTaskNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
+func newDecisionHistoryView(decision domain.Decision) decisionHistoryView {
+	return decisionHistoryView{
+		DecisionID:       decision.ID,
+		TaskID:           decision.TaskID,
+		Question:         decision.Question,
+		AnswerLabel:      decision.AnswerLabel,
+		AnswerText:       decision.AnswerText,
+		SettledByDefault: decision.DefaultAppliedAt != nil,
+		DefaultAppliedAt: decision.DefaultAppliedAt,
+		AnsweredAt:       decision.AnsweredAt,
+		AppliedAt:        decision.AppliedAt,
+		AnsweredVia:      decision.AnsweredVia,
+		AnswerQuote:      decision.AnswerQuote,
+		AnswerEvidence:   decision.AnswerEvidence,
+	}
+}
+
+func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request, decisionID, action string) {
+	switch action {
+	case "answer":
+		s.handleAnswer(w, r, decisionID)
+	case "revise":
+		s.handleRevise(w, r, decisionID)
+	case "approve":
+		s.handleApprove(w, r, decisionID)
+	case "reject":
+		s.handleReject(w, r, decisionID)
+	default:
+		writeError(w, http.StatusNotFound, "endpoint not found")
+	}
+}
+
+func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request, decisionID string) {
+	var request answerRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(request.AnswerLabel) == "" && strings.TrimSpace(request.AnswerText) == "" {
+		writeError(w, http.StatusBadRequest, "an answer label or text is required")
+		return
+	}
+	canonicalDecisionID, ok := s.resolveDecisionID(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	decision, ok := s.ensureOpenDecision(w, r.Context(), canonicalDecisionID)
+	if !ok {
+		return
+	}
+	if decision.Kind == domain.DecisionKind("completion") || decision.Kind == domain.KindGoalReview {
+		writeError(w, http.StatusBadRequest, "use approve or reject for this decision")
+		return
+	}
+	decision, err := s.store.AnswerDecision(r.Context(), store.AnswerInput{
+		DecisionID:  canonicalDecisionID,
+		AnswerLabel: request.AnswerLabel,
+		AnswerText:  request.AnswerText,
+	})
+	if errors.Is(err, store.ErrDecisionNotOpen) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, decision)
+}
+
+func (s *Server) handleRevise(w http.ResponseWriter, r *http.Request, decisionID string) {
+	var request reviseDecisionRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if len(request.Options) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one option is required")
+		return
+	}
+
+	canonicalDecisionID, ok := s.resolveDecisionID(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	original, err := s.store.GetDecision(r.Context(), canonicalDecisionID)
+	if errors.Is(err, store.ErrDecisionNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if original.Kind == domain.DecisionKind("completion") {
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
+		return
+	}
+	if original.DefaultAppliedAt == nil && original.AnsweredAt == nil {
+		writeError(w, http.StatusConflict, "decision is not settled")
+		return
+	}
+
+	revised, err := s.store.AskDecision(r.Context(), store.AskInput{
+		GoalID:         original.GoalID,
+		TaskID:         original.TaskID,
+		Kind:           original.Kind,
+		Question:       revisionQuestion(original),
+		Options:        request.Options,
+		AgentSessionID: original.AgentSessionID,
+	})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, revised)
+}
+
+func revisionQuestion(original domain.Decision) string {
+	selected := strings.TrimSpace(original.AnswerLabel)
+	if selected == "" {
+		selected = strings.TrimSpace(original.DefaultOption)
+	}
+	if answerText := strings.TrimSpace(original.AnswerText); answerText != "" {
+		if selected == "" {
+			selected = answerText
+		} else {
+			selected += " - " + answerText
+		}
+	}
+	if selected == "" {
+		selected = "(no option recorded)"
+	}
+	return fmt.Sprintf("Reconsider the decision %q. The selected option was %q.", original.Question, selected)
+}
+
+func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, decisionID string) {
+	var request struct{}
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	canonicalDecisionID, ok := s.resolveDecisionID(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	decision, ok := s.getOpenDecision(w, r.Context(), canonicalDecisionID)
+	if !ok {
+		return
+	}
+	var (
+		goal domain.Goal
+		err  error
+	)
+	switch decision.Kind {
+	case domain.KindGoalReview:
+		goal, err = s.store.ApproveGoalReview(r.Context(), decision.ID)
+	default:
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
+		return
+	}
+	if errors.Is(err, store.ErrDecisionNotOpen) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, goal)
+}
+
+func (s *Server) handleReject(w http.ResponseWriter, r *http.Request, decisionID string) {
+	var request rejectionRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	canonicalDecisionID, ok := s.resolveDecisionID(w, r.Context(), decisionID)
+	if !ok {
+		return
+	}
+	decision, ok := s.getOpenDecision(w, r.Context(), canonicalDecisionID)
+	if !ok {
+		return
+	}
+	var err error
+	switch decision.Kind {
+	case domain.KindGoalReview:
+		err = s.store.RejectGoalReview(r.Context(), canonicalDecisionID, request.Reason)
+	default:
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
+		return
+	}
+	if errors.Is(err, store.ErrDecisionNotOpen) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	decision, err = s.store.GetDecision(r.Context(), canonicalDecisionID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, decision)
+}
+
+func (s *Server) ensureOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID int64) (domain.Decision, bool) {
+	decision, err := s.store.GetDecision(ctx, decisionID)
+	if errors.Is(err, store.ErrDecisionNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return domain.Decision{}, false
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return domain.Decision{}, false
+	}
+	if decision.Status != domain.DecisionOpen {
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
+		return domain.Decision{}, false
+	}
+	return decision, true
+}
+
+func (s *Server) getOpenDecision(w http.ResponseWriter, ctx context.Context, decisionID int64) (domain.Decision, bool) {
+	decision, err := s.store.GetDecision(ctx, decisionID)
+	if errors.Is(err, store.ErrDecisionNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return domain.Decision{}, false
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return domain.Decision{}, false
+	}
+	if decision.Status != domain.DecisionOpen || decision.Kind != domain.KindGoalReview {
+		writeError(w, http.StatusConflict, store.ErrDecisionNotOpen.Error())
+		return domain.Decision{}, false
+	}
+	return decision, true
+}
+
+type eventFilter struct {
+	projectID          string
+	goalID             string
+	canonicalProjectID int64
+	canonicalGoalID    int64
+	canonicalTaskID    int64
+	taskID             string
+	// agentSessionID is the session behind the monitor_token; 0 when absent.
+	agentSessionID int64
+}
+
+func (s *Server) parseEventFilter(w http.ResponseWriter, r *http.Request) (eventFilter, bool) {
+	filter := eventFilter{
+		projectID: r.URL.Query().Get("project_id"),
+		goalID:    r.URL.Query().Get("goal_id"),
+		taskID:    r.URL.Query().Get("task_id"),
+	}
+	if filter.projectID != "" {
+		var ok bool
+		filter.canonicalProjectID, ok = s.resolveProjectID(w, r.Context(), filter.projectID)
+		if !ok {
+			return eventFilter{}, false
+		}
+	}
+	if filter.goalID != "" {
+		var ok bool
+		filter.canonicalGoalID, ok = s.resolveGoalID(w, r.Context(), filter.goalID)
+		if !ok {
+			return eventFilter{}, false
+		}
+	}
+	if filter.taskID != "" {
+		var ok bool
+		filter.canonicalTaskID, ok = s.resolveTaskID(w, r.Context(), filter.taskID)
+		if !ok {
+			return eventFilter{}, false
+		}
+	}
+	if token := r.URL.Query().Get("monitor_token"); token != "" {
+		id, err := s.store.MonitorBindingAgentSessionID(r.Context(), token)
+		if err != nil && !errors.Is(err, store.ErrMonitorBindingNotFound) {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return eventFilter{}, false
+		}
+		filter.agentSessionID = id
+	}
+	return filter, true
+}
+
+func (s *Server) eventPasses(ctx context.Context, filter eventFilter, event store.DecisionEvent) bool {
+	if event.Name == EventHandoffEntryAdded {
+		data, ok := normalizeHandoffEntryEvent(event.Data)
+		if !ok {
+			return false
+		}
+		event.Data = data
+		if filter.agentSessionID != 0 {
+			if data.AuthorSessionID == filter.agentSessionID {
+				return false
+			}
+			if len(data.parties) > 0 && !slices.Contains(data.parties, filter.agentSessionID) {
+				return false
+			}
+		}
+	}
+	if filter.projectID != "" {
+		eventProjectID := event.ProjectID
+		var err error
+		if eventProjectID == 0 {
+			eventProjectID, err = s.eventProjectID(ctx, event)
+		}
+		if err != nil || (eventProjectID != 0 && eventProjectID != filter.canonicalProjectID) {
+			return false
+		}
+	}
+	if filter.goalID != "" && !eventMatchesGoalID(event, filter.canonicalGoalID) {
+		return false
+	}
+	if filter.taskID != "" && !eventMatchesTaskID(event, filter.canonicalTaskID) {
+		return false
+	}
+	return true
+}
+
+func eventMatchesTaskID(event store.DecisionEvent, taskID int64) bool {
+	switch data := event.Data.(type) {
+	case store.KeepaliveEvent, *store.KeepaliveEvent:
+		return true
+	case domain.Decision:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *domain.Decision:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
+	case store.WakeupEvent:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *store.WakeupEvent:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
+	case HandoffEntryAddedEvent:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *HandoffEntryAddedEvent:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
+	case store.HandoffEvent:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *store.HandoffEvent:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
+	case store.HandoffReviewEvent:
+		return data.TaskID != 0 && data.TaskID == taskID
+	case *store.HandoffReviewEvent:
+		return data != nil && data.TaskID != 0 && data.TaskID == taskID
+	default:
+		return false
+	}
+}
+
+// countedScanHandoffEntryRecords is the event streams' entry point to
+// scanHandoffEntryRecords; it counts each scan for handoffEntryScans.
+func (s *Server) countedScanHandoffEntryRecords(ctx context.Context, filter eventFilter) ([]handoffEntryRecord, error) {
+	s.handoffEntryScans.Add(1)
+	return s.scanHandoffEntryRecords(ctx, filter)
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming is not supported")
+		return
+	}
+	filter, ok := s.parseEventFilter(w, r)
+	if !ok {
+		return
+	}
+	baselineAt := time.Now().UTC()
+	if _, _, _, err := s.eventScopeIDs(r.Context(), filter); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ch, cancel := s.store.SubscribeEvents()
+	defer cancel()
+	// The first tick always scans: the tracker may hold entries from this
+	// initial scan that still need to be delivered, those created after the
+	// baseline and those after Last-Event-ID on a resumed stream.
+	seen := int64(-1)
+	records, err := s.countedScanHandoffEntryRecords(r.Context(), filter)
+	if err != nil {
+		writeHandoffHistoryError(w, err)
+		return
+	}
+	tracker := newHandoffEntryTracker(records, r.Header.Get("Last-Event-ID"), baselineAt)
+	ticker := time.NewTicker(handoffEntryPollInterval)
+	defer ticker.Stop()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			if event.Name == EventHandoffEntryAdded {
+				data, ok := normalizeHandoffEntryEvent(event.Data)
+				if !ok {
+					continue
+				}
+				event.Data = data
+				if !tracker.mark(data) {
+					continue
+				}
+			}
+			if !s.eventPasses(r.Context(), filter, event) {
+				continue
+			}
+			if err := writeSSEEvent(w, event); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ticker.C:
+			mark, markErr := s.store.HandoffEntryWatermark(r.Context())
+			if markErr == nil && mark == seen {
+				continue
+			}
+			records, err := s.countedScanHandoffEntryRecords(r.Context(), filter)
+			if err != nil {
+				continue
+			}
+			seen = mark
+			if markErr != nil {
+				seen = -1
+			}
+			for _, record := range records {
+				if !tracker.mark(record.event) {
+					continue
+				}
+				event := store.DecisionEvent{Name: EventHandoffEntryAdded, Data: record.event}
+				if !s.eventPasses(r.Context(), filter, event) {
+					continue
+				}
+				if err := writeSSEEvent(w, event); err != nil {
+					return
+				}
+				flusher.Flush()
+			}
+		}
+	}
+}
+
+func writeSSEEvent(w http.ResponseWriter, event store.DecisionEvent) error {
+	data, err := json.Marshal(event.Data)
+	if err != nil {
+		return err
+	}
+	if event.Name == EventHandoffEntryAdded {
+		if entry, ok := normalizeHandoffEntryEvent(event.Data); ok {
+			if _, err := fmt.Fprintf(w, "id: %d\n", entry.ID); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, data)
+	return err
+}
+
+func (s *Server) eventScopeIDs(ctx context.Context, filter eventFilter) (projectID, goalID, taskID int64, err error) {
+	projectID = filter.canonicalProjectID
+	goalID = filter.canonicalGoalID
+	taskID = filter.canonicalTaskID
+	if goalID != 0 {
+		goal, getErr := s.store.GetGoal(ctx, goalID)
+		if getErr != nil {
+			return 0, 0, 0, getErr
+		}
+		if projectID == 0 {
+			projectID = goal.ProjectID
+		} else if goal.ProjectID != projectID {
+			return 0, 0, 0, fmt.Errorf("goal %d does not belong to project %d", goalID, projectID)
+		}
+	}
+	if taskID != 0 {
+		taskGoalID, getErr := s.store.GetTaskGoalID(ctx, taskID)
+		if getErr != nil {
+			return 0, 0, 0, getErr
+		}
+		if goalID == 0 {
+			goalID = taskGoalID
+		} else if goalID != taskGoalID {
+			return 0, 0, 0, fmt.Errorf("task %d does not belong to goal %d", taskID, goalID)
+		}
+		goal, getErr := s.store.GetGoal(ctx, goalID)
+		if getErr != nil {
+			return 0, 0, 0, getErr
+		}
+		if projectID == 0 {
+			projectID = goal.ProjectID
+		} else if goal.ProjectID != projectID {
+			return 0, 0, 0, fmt.Errorf("task %d does not belong to project %d", taskID, projectID)
+		}
+	}
+	return projectID, goalID, taskID, nil
+}
+
+func writeDecisionEventSSE(w io.Writer, event store.DecisionEvent) error {
+	data, err := json.Marshal(event.Data)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, data)
+	return err
+}
+
+func (s *Server) handleEventReconciliation(w http.ResponseWriter, r *http.Request) {
+	filter, ok := s.parseEventFilter(w, r)
+	if !ok {
+		return
+	}
+	projectID, goalID, taskID, err := s.eventScopeIDs(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if projectID <= 0 {
+		writeError(w, http.StatusBadRequest, "project_id is required for workflow reconciliation")
+		return
+	}
+	reconciliation, err := s.store.ReconcileWorkflow(r.Context(), store.WorkflowEventQuery{
+		ProjectID: projectID, GoalID: goalID, TaskID: taskID,
+	})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	response := workflowReconciliationResponse{WorkflowReconciliation: reconciliation}
+	if goalID == 0 && taskID == 0 {
+		if token := strings.TrimSpace(r.URL.Query().Get("monitor_token")); token != "" {
+			watermark, watermarkErr := s.store.MonitorBindingLastReconciledAt(r.Context(), token)
+			if watermarkErr != nil && !errors.Is(watermarkErr, store.ErrMonitorBindingNotFound) {
+				writeStoreError(w, watermarkErr)
+				return
+			}
+			if watermarkErr == nil {
+				response.MonitorLastReconciledAt = &watermark
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func eventMatchesGoalID(event store.DecisionEvent, goalID int64) bool {
+	switch data := event.Data.(type) {
+	case store.KeepaliveEvent, *store.KeepaliveEvent:
+		return true
+	case store.WakeupEvaluateFailedEvent, *store.WakeupEvaluateFailedEvent:
+		return true
+	case domain.Decision:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *domain.Decision:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	case store.WakeupEvent:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *store.WakeupEvent:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	case store.GoalWithdrawnEvent:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *store.GoalWithdrawnEvent:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	case HandoffEntryAddedEvent:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *HandoffEntryAddedEvent:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	case store.HandoffEvent:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *store.HandoffEvent:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	case store.HandoffReviewEvent:
+		return data.GoalID != 0 && data.GoalID == goalID
+	case *store.HandoffReviewEvent:
+		return data != nil && data.GoalID != 0 && data.GoalID == goalID
+	default:
+		return false
+	}
+}
+
+func (s *Server) eventProjectID(ctx context.Context, event store.DecisionEvent) (int64, error) {
+	switch data := event.Data.(type) {
+	case domain.Decision:
+		goal, err := s.store.GetGoal(ctx, data.GoalID)
+		if err != nil {
+			return 0, err
+		}
+		return goal.ProjectID, nil
+	case *domain.Decision:
+		if data == nil {
+			return 0, nil
+		}
+		goal, err := s.store.GetGoal(ctx, data.GoalID)
+		if err != nil {
+			return 0, err
+		}
+		return goal.ProjectID, nil
+	case store.WakeupEvent:
+		return data.ProjectID, nil
+	case *store.WakeupEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case store.GoalWithdrawnEvent:
+		return data.ProjectID, nil
+	case *store.GoalWithdrawnEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case store.ActionableWakeupEvent:
+		return data.ProjectID, nil
+	case *store.ActionableWakeupEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case store.WakeupDiscrepancyEvent:
+		return data.ProjectID, nil
+	case *store.WakeupDiscrepancyEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case HandoffEntryAddedEvent:
+		return data.ProjectID, nil
+	case *HandoffEntryAddedEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case store.HandoffEvent:
+		return data.ProjectID, nil
+	case *store.HandoffEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	case store.HandoffReviewEvent:
+		return data.ProjectID, nil
+	case *store.HandoffReviewEvent:
+		if data == nil {
+			return 0, nil
+		}
+		return data.ProjectID, nil
+	default:
+		return 0, nil
+	}
+}
+
+func decodeJSONBody(r *http.Request, dst any) error {
+	if r.Body == nil {
+		return io.EOF
+	}
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func indexDecisions(decisions []domain.Decision) map[int64][]domain.Decision {
+	byTask := make(map[int64][]domain.Decision)
+	for _, decision := range decisions {
+		if decision.TaskID == 0 {
+			continue
+		}
+		byTask[decision.TaskID] = append(byTask[decision.TaskID], decision)
+	}
+	return byTask
+}
+
+func newTaskView(task domain.Task, handoff *store.TaskHandoff, decisions []domain.Decision) TaskView {
+	if decisions == nil {
+		decisions = make([]domain.Decision, 0)
+	}
+	var claimedBy int64
+	var claimedAt *time.Time
+	if handoff != nil {
+		claimedBy = handoff.ReceivedBy
+		if claimedBy == 0 {
+			claimedBy = handoff.RequestedBy
+		}
+		claimedAt = handoff.ReceivedAt
+		if claimedAt == nil {
+			claimedAt = handoff.RequestedAt
+		}
+	}
+	held := int64(0)
+	if claimedAt != nil {
+		if elapsed := time.Since(*claimedAt); elapsed > 0 {
+			held = int64(elapsed / time.Second)
+		}
+	}
+	return TaskView{
+		Task:           task,
+		ClaimedBy:      claimedBy,
+		ClaimedAt:      claimedAt,
+		HeldForSeconds: held,
+		OpenDecisions:  decisions,
+	}
+}
+
+func isProjectableTask(status domain.TaskStatus) bool {
+	return status == domain.TaskStatus("doing") || status == domain.TaskStatus("todo")
+}
+
+func nonNilDecisions(value []domain.Decision) []domain.Decision {
+	if value == nil {
+		return make([]domain.Decision, 0)
+	}
+	return value
+}
+
+func nonNilGoals(value []domain.Goal) []domain.Goal {
+	if value == nil {
+		return make([]domain.Goal, 0)
+	}
+	return value
+}
+
+func nonNilTaskViews(value []TaskView) []TaskView {
+	if value == nil {
+		return make([]TaskView, 0)
+	}
+	return value
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func (s *Server) resolveProjectID(w http.ResponseWriter, ctx context.Context, value string) (int64, bool) {
+	id, err := s.store.ResolveProjectID(ctx, value)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *Server) resolveGoalID(w http.ResponseWriter, ctx context.Context, value string) (int64, bool) {
+	id, err := s.store.ResolveGoalID(ctx, value)
+	if err != nil {
+		if strings.Contains(err.Error(), " is not found") {
+			writeError(w, http.StatusNotFound, store.ErrGoalNotFound.Error())
+			return 0, false
+		}
+		writeError(w, http.StatusNotFound, err.Error())
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *Server) resolveTaskID(w http.ResponseWriter, ctx context.Context, value string) (int64, bool) {
+	id, err := s.store.ResolveTaskID(ctx, value)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *Server) resolveDecisionID(w http.ResponseWriter, ctx context.Context, value string) (int64, bool) {
+	id, err := s.store.ResolveDecisionID(ctx, value)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return 0, false
+	}
+	return id, true
+}
+
+func writeStoreError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrProjectArchived) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
+func (s *Server) handleArchiveProject(w http.ResponseWriter, r *http.Request, id string, archive bool) {
+	projectID, ok := s.resolveProjectID(w, r.Context(), id)
+	if !ok {
+		return
+	}
+	var (
+		project domain.Project
+		err     error
+	)
+	if archive {
+		project, err = s.store.ArchiveProject(r.Context(), projectID)
+	} else {
+		project, err = s.store.UnarchiveProject(r.Context(), projectID)
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, project)
+}
+
+// rejectArchivedWrite answers 409 to a non-GET request under /api/goals/{id},
+// /api/tasks/{id} or /api/decisions/{id} whose project is archived. An id that
+// does not resolve is left to the endpoint's own error.
+func (s *Server) rejectArchivedWrite(w http.ResponseWriter, r *http.Request, parts []string) bool {
+	if r.Method == http.MethodGet || len(parts) < 3 || parts[0] != "api" || parts[2] == "" {
+		return false
+	}
+	ctx := r.Context()
+	var projectID int64
+	switch parts[1] {
+	case "goals":
+		goalID, err := s.store.ResolveGoalID(ctx, parts[2])
+		if err != nil {
+			return false
+		}
+		goal, err := s.store.GetGoal(ctx, goalID)
+		if err != nil {
+			return false
+		}
+		projectID = goal.ProjectID
+	case "tasks":
+		taskID, err := s.store.ResolveTaskID(ctx, parts[2])
+		if err != nil {
+			return false
+		}
+		if projectID, err = s.store.ProjectIDForTask(ctx, taskID); err != nil {
+			return false
+		}
+	case "decisions":
+		decisionID, err := s.store.ResolveDecisionID(ctx, parts[2])
+		if err != nil {
+			return false
+		}
+		decision, err := s.store.GetDecision(ctx, decisionID)
+		if err != nil {
+			return false
+		}
+		goal, err := s.store.GetGoal(ctx, decision.GoalID)
+		if err != nil {
+			return false
+		}
+		projectID = goal.ProjectID
+	default:
+		return false
+	}
+	if err := s.store.EnsureProjectActive(ctx, projectID); errors.Is(err, store.ErrProjectArchived) {
+		writeStoreError(w, err)
+		return true
+	}
+	return false
+}

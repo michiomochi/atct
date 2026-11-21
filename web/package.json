@@ -1,0 +1,39 @@
+{
+  "name": "atct-web",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "PUBLIC_ATCT_LOCALE=en astro check && PUBLIC_ATCT_LOCALE=en astro build && PUBLIC_ATCT_LOCALE=ja astro build",
+    "preview": "astro preview",
+    "test": "vitest run",
+    "typecheck": "PUBLIC_ATCT_LOCALE=en astro check"
+  },
+  "dependencies": {
+    "@astrojs/react": "^4.3.0",
+    "@cloudflare/kumo": "^2.10.0",
+    "@git-diff-view/react": "^0.1.7",
+    "astro": "^5.13.5",
+    "i18next": "^26.3.6",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-i18next": "^17.0.11",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "jsdom": "^30.0.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

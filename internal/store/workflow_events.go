@@ -1,0 +1,225 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/michiomochi/atct-archive/internal/domain"
+	"github.com/michiomochi/atct-archive/internal/store/sqlcgen"
+)
+
+// WorkflowEventQuery scopes canonical reconciliation to one project and
+// optionally one goal or task.
+type WorkflowEventQuery struct {
+	ProjectID int64
+	GoalID    int64
+	TaskID    int64
+}
+
+// WorkflowReconciliation is a point-in-time canonical snapshot. It contains
+// the scoped state needed after a watcher restarts or a live signal is missed.
+type WorkflowReconciliation struct {
+	Goals              []domain.Goal       `json:"goals"`
+	Tasks              []domain.Task       `json:"tasks"`
+	Decisions          []WorkflowDecision  `json:"decisions"`
+	GoalHandoffs       []GoalHandoff       `json:"goal_handoffs"`
+	PlanHandoffs       []PlanHandoff       `json:"plan_handoffs"`
+	TaskHandoffs       []TaskHandoff       `json:"task_handoffs"`
+	TaskCreateHandoffs []TaskCreateHandoff `json:"task_create_handoffs"`
+}
+
+// WorkflowDecision carries the live delivery role of the session that owns a Decision.
+type WorkflowDecision struct {
+	domain.Decision
+	TargetRole string `json:"target_role"`
+}
+
+// DecisionRoutesToCommander reports whether a decision is addressed to the commander
+// by its kind (or because it has no owning session) rather than by who created it.
+func DecisionRoutesToCommander(d domain.Decision) bool {
+	return d.Kind == domain.KindGoalReview || d.AgentSessionID == 0
+}
+
+// decisionRoles resolves which role a decision is addressed to. ReconcileWorkflow
+// loads it once: resolving it per decision re-read every goal for every
+// decision, which dominated the cost of a reconcile.
+type decisionRoles struct {
+	commanders    map[int64]bool
+	subcommanders map[int64]bool
+}
+
+func (s *Store) loadDecisionRoles(ctx context.Context) (*decisionRoles, error) {
+	projects, err := s.ListProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	handoffs, err := s.ListOpenGoalHandoffs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// ListAllGoals leaves out archived projects; a handoff on one of their goals
+	// does not make its receiver a subcommander.
+	goals, err := s.ListAllGoals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roles := &decisionRoles{commanders: map[int64]bool{}, subcommanders: map[int64]bool{}}
+	for _, project := range projects {
+		roles.commanders[project.ClaimedBy] = true
+	}
+	for _, goal := range goals {
+		if handoff := handoffs[goal.ID]; handoff != nil && handoff.ReceivedAt != nil {
+			roles.subcommanders[handoff.ReceivedBy] = true
+		}
+	}
+	return roles, nil
+}
+
+func (r *decisionRoles) targetRole(decision domain.Decision) string {
+	if DecisionRoutesToCommander(decision) || r.commanders[decision.AgentSessionID] {
+		return "commander"
+	}
+	if r.subcommanders[decision.AgentSessionID] {
+		return "subcommander"
+	}
+	return "executor"
+}
+
+func workflowDecisionEvent(name string, row sqlcgen.Decision) (DecisionEvent, error) {
+	decision, err := decisionFromRow(decisionRowFromSQLC(row))
+	if err != nil {
+		return DecisionEvent{}, err
+	}
+	return DecisionEvent{Name: name, Data: decision, OccurredAt: decision.CreatedAt}, nil
+}
+
+func (s *Store) publishWorkflowEvents(events []DecisionEvent) {
+	for _, event := range events {
+		if event.Name != "" {
+			s.notify.publishEvent(event)
+		}
+	}
+}
+
+func (s *Store) ReconcileWorkflow(ctx context.Context, query WorkflowEventQuery) (WorkflowReconciliation, error) {
+	projectID := query.ProjectID
+	if query.GoalID != 0 {
+		goal, err := s.GetGoal(ctx, query.GoalID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		if projectID == 0 {
+			projectID = goal.ProjectID
+		} else if goal.ProjectID != projectID {
+			return WorkflowReconciliation{}, fmt.Errorf("goal %d does not belong to project %d", query.GoalID, projectID)
+		}
+	}
+	if projectID <= 0 {
+		return WorkflowReconciliation{}, errors.New("workflow reconciliation project_id is required")
+	}
+	if query.TaskID != 0 {
+		taskGoalID, err := sqlcgen.New(s.db).GetTaskGoalID(ctx, query.TaskID)
+		if err != nil {
+			return WorkflowReconciliation{}, fmt.Errorf("find task for workflow reconciliation: %w", err)
+		}
+		if query.GoalID == 0 {
+			query.GoalID = taskGoalID
+		} else if query.GoalID != taskGoalID {
+			return WorkflowReconciliation{}, fmt.Errorf("task %d does not belong to goal %d", query.TaskID, query.GoalID)
+		}
+	}
+	goals, err := s.ListGoals(ctx, projectID)
+	if err != nil {
+		return WorkflowReconciliation{}, err
+	}
+	if query.GoalID != 0 {
+		filtered := goals[:0]
+		for _, goal := range goals {
+			if goal.ID == query.GoalID {
+				filtered = append(filtered, goal)
+			}
+		}
+		goals = filtered
+	}
+	if query.TaskID != 0 && len(goals) == 0 {
+		return WorkflowReconciliation{}, fmt.Errorf("task %d is outside project %d", query.TaskID, projectID)
+	}
+	reconciliation := WorkflowReconciliation{
+		Goals:              append([]domain.Goal(nil), goals...),
+		Decisions:          make([]WorkflowDecision, 0),
+		GoalHandoffs:       make([]GoalHandoff, 0),
+		PlanHandoffs:       make([]PlanHandoff, 0),
+		TaskHandoffs:       make([]TaskHandoff, 0),
+		TaskCreateHandoffs: make([]TaskCreateHandoff, 0),
+		Tasks:              make([]domain.Task, 0),
+	}
+	var roles *decisionRoles
+	for _, goal := range goals {
+		tasks, err := s.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		for _, task := range tasks {
+			if query.TaskID == 0 || task.ID == query.TaskID {
+				reconciliation.Tasks = append(reconciliation.Tasks, task)
+				handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
+				if err != nil {
+					return WorkflowReconciliation{}, err
+				}
+				for _, handoff := range handoffs {
+					// Only a handoff someone took can have lost its monitor.
+					if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+						live, err := s.hasLiveExecutorMonitor(ctx, goal.ProjectID, goal.ID, task.ID)
+						if err != nil {
+							return WorkflowReconciliation{}, err
+						}
+						handoff.MonitorLost = !live
+					}
+					reconciliation.TaskHandoffs = append(reconciliation.TaskHandoffs, handoff)
+				}
+			}
+		}
+		goalHandoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		reconciliation.GoalHandoffs = append(reconciliation.GoalHandoffs, goalHandoffs...)
+		planHandoffs, err := s.ListPlanHandoffs(ctx, goal.ID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		reconciliation.PlanHandoffs = append(reconciliation.PlanHandoffs, planHandoffs...)
+		taskCreateHandoffs, err := s.ListTaskCreateHandoffs(ctx, goal.ID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		reconciliation.TaskCreateHandoffs = append(reconciliation.TaskCreateHandoffs, taskCreateHandoffs...)
+		decisions, err := s.ListDecisionsForGoal(ctx, goal.ID)
+		if err != nil {
+			return WorkflowReconciliation{}, err
+		}
+		for _, decision := range decisions {
+			if query.TaskID == 0 || decision.TaskID == query.TaskID {
+				if roles == nil {
+					if roles, err = s.loadDecisionRoles(ctx); err != nil {
+						return WorkflowReconciliation{}, err
+					}
+				}
+				reconciliation.Decisions = append(reconciliation.Decisions, WorkflowDecision{Decision: decision, TargetRole: roles.targetRole(decision)})
+			}
+		}
+	}
+	return reconciliation, nil
+}
+
+func (query WorkflowEventQuery) ProjectIDOr(fallback int64) int64 {
+	if query.ProjectID != 0 {
+		return query.ProjectID
+	}
+	return fallback
+}
+
+func (s *Store) ReconcileWorkflowEvents(ctx context.Context, query WorkflowEventQuery) (WorkflowReconciliation, error) {
+	return s.ReconcileWorkflow(ctx, query)
+}

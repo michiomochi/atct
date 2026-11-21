@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# Refuse a Monitor watch in the form that expires, while the session holds only
+# answers it is waiting for. Unlike pre-tool-use this is not a gate for ATCT
+# tools: whenever the decision cannot be made, the Monitor is let through.
+if ! command -v atct >/dev/null 2>&1; then
+  exit 0
+fi
+
+if ! out="$(atct monitor-check --hook-input)"; then
+  exit 0
+fi
+printf '%s' "$out"
+exit 0

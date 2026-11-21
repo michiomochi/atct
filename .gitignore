@@ -1,0 +1,39 @@
+# Primary research material. Contains competitive analysis and tool evaluations,
+# and is deliberately not published. The spec under doc/specs/ cites only what it needs.
+doc/research/
+/.worktrees/
+
+# Build artifacts. Anchored to the repository root so they do not match
+# cmd/atct/ or the atct entries under web/.
+/atct
+/atct-mcp
+*.db
+*.db-wal
+*.db-shm
+
+# Frontend
+node_modules/
+# The worktree setup symlinks web/node_modules to the primary checkout, and a
+# trailing-slash pattern only matches directories, so the symlink needs its own line.
+web/node_modules
+.astro/
+# The frontend build output is generated at release time, but the directory has
+# to survive: go:embed rejects a missing or empty one. See web/embed.go.
+web/dist/*
+!web/dist/.gitkeep
+# pnpm writes its content-addressable store here when the repository root is
+# used as the store directory.
+.pnpm-store/
+# GoReleaser output. Anchored to the repository root so it does not swallow
+# web/dist/.
+/dist/
+
+# Playwright MCP writes snapshots and console logs beside the working directory
+# unless --output-dir is set. Ignored so a browser check cannot dirty a commit.
+.playwright-mcp/
+
+# macOS
+.DS_Store
+# Go build cache when GOCACHE is pointed inside the repo. Ignored so a stray
+# cache cannot be staged by `git add -A` and cannot bury `git status` output.
+.atct-tmp/

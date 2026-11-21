@@ -1,0 +1,18 @@
+{
+  "name": "atct",
+  "owner": {
+    "name": "michiomochi"
+  },
+  "allowCrossMarketplaceDependenciesOn": [
+    "claude-plugins-official"
+  ],
+  "plugins": [
+    {
+      "name": "atct",
+      "source": "./",
+      "description": "Create tasks, claim work, and ask a human for decisions without leaving the session. Answers survive a dead session and are picked up by the next one.",
+      "category": "development",
+      "homepage": "https://github.com/michiomochi/atct-archive"
+    }
+  ]
+}

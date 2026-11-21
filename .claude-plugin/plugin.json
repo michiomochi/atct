@@ -1,0 +1,12 @@
+{
+  "name": "atct",
+  "description": "Create tasks, claim work, and ask a human for decisions without leaving the session.",
+  "version": "0.75.0",
+  "hooks": "./hooks/claude-hooks.json",
+  "dependencies": [
+    {
+      "name": "superpowers",
+      "marketplace": "claude-plugins-official"
+    }
+  ]
+}

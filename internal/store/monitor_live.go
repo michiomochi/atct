@@ -1,0 +1,78 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/michiomochi/atct-archive/internal/store/sqlcgen"
+)
+
+// MonitorLiveScope is the role scope a Monitor covers: one per project/role,
+// and per goal or task where the role is scoped to one.
+type MonitorLiveScope struct {
+	ProjectID int64
+	Role      string
+	GoalID    *int64
+	// ExcludeRearming drops a `--once` watch that is only inside its re-arm
+	// grace: it has ended, so it will not deliver anything until re-armed.
+	ExcludeRearming bool
+}
+
+// HasLiveMonitorForScope reports whether the scope still has a Monitor inside
+// the health lease. It uses the same window as ListMonitorHealth: a row that
+// stopped, or stopped heartbeating, is not live.
+//
+// The scope columns are matched instead of monitor_health.agent_session_id
+// because monitors do not record that column; it is 0 for every row.
+func (s *Store) HasLiveMonitorForScope(ctx context.Context, scope MonitorLiveScope) (bool, error) {
+	if scope.ProjectID <= 0 {
+		return false, errors.New("project_id is required")
+	}
+	if scope.Role == "" {
+		return false, errors.New("role is required")
+	}
+	cutoff := formatTimestamp(time.Now().Add(-MonitorHealthLease))
+	excludeRearming := int64(0)
+	if scope.ExcludeRearming {
+		excludeRearming = 1
+	}
+	count, err := sqlcgen.New(s.db).CountLiveMonitorsForScope(ctx, sqlcgen.CountLiveMonitorsForScopeParams{
+		ProjectID:       scope.ProjectID,
+		Role:            scope.Role,
+		GoalID:          nullableMonitorID(scope.GoalID),
+		LastSeenAt:      cutoff,
+		ExcludeRearming: excludeRearming,
+	})
+	if err != nil {
+		return false, fmt.Errorf("count live monitors: %w", err)
+	}
+	return count > 0, nil
+}
+
+// MonitorLastSeenAt returns the latest heartbeat among the monitors in history.
+// goalID 0 covers every row; otherwise only subcommander rows of that goal
+// count. ok is false when no row matches.
+func MonitorLastSeenAt(history []MonitorHealth, goalID int64) (time.Time, bool) {
+	var latest time.Time
+	ok := false
+	for _, h := range history {
+		if goalID != 0 && (h.Role != "subcommander" || h.GoalID == nil || *h.GoalID != goalID) {
+			continue
+		}
+		if !ok || h.LastSeenAt.After(latest) {
+			latest = h.LastSeenAt
+			ok = true
+		}
+	}
+	return latest, ok
+}
+
+// HasLiveExecutorMonitorForTask reports whether the executor of one task still
+// has a Monitor inside the health lease. Unlike HasLiveMonitorForScope it
+// matches the task too, so another executor's Monitor on the same goal does
+// not count.
+func (s *Store) HasLiveExecutorMonitorForTask(ctx context.Context, projectID, goalID, taskID int64) (bool, error) {
+	return s.hasLiveExecutorMonitor(ctx, projectID, goalID, taskID)
+}

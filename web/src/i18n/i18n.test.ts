@@ -1,0 +1,137 @@
+import { describe, expect, it } from "vitest";
+import { en } from "./en";
+import { ja } from "./ja";
+import i18n, { BUILD_LOCALE, formatDateTime, formatDuration, t } from "./index";
+import currentTestSource from "./i18n.test.ts?raw";
+
+const sourceModules = import.meta.glob("../**/*.{ts,tsx,astro}", {
+  eager: true,
+  import: "default",
+  query: "?raw",
+}) as Record<string, string>;
+
+function collectSourceText(): string {
+  return [
+    currentTestSource,
+    ...Object.entries(sourceModules)
+      .filter(([path]) => !path.endsWith("/en.ts") && !path.endsWith("/ja.ts"))
+      .map(([, source]) => source),
+  ].join("\n");
+}
+
+describe("resource parity", () => {
+  it("uses the required Japanese completion report headings", () => {
+    const headings = {
+      "goal.completion.report.workDone": "完了した作業内容",
+      "goal.completion.report.nowPossible": "できるようになったこと",
+      "goal.completion.report.howToVerify": "確かめ方",
+      "goal.completion.report.surprises": "想定と違ったこと",
+      "goal.completion.report.needsReview": "確認が必要なこと",
+    } as const;
+
+    for (const [key, expected] of Object.entries(headings)) {
+      expect((ja as Record<string, string>)[key]).toBe(expected);
+    }
+  });
+
+  it("has the same keys in both languages", () => {
+    expect(Object.keys(ja).sort()).toEqual(Object.keys(en).sort());
+  });
+
+  it("references every translation key outside the resource definitions", () => {
+    const sourceText = collectSourceText();
+    const unreferencedKeys = Object.keys(en).filter((key) => !sourceText.includes(key));
+
+    expect(unreferencedKeys, `unreferenced translation keys: ${unreferencedKeys.join(", ")}`).toEqual([]);
+  });
+
+  it("uses the same language names in both resources", () => {
+    expect(en["locale.en"]).toBe(ja["locale.en"]);
+    expect(en["locale.ja"]).toBe(ja["locale.ja"]);
+  });
+
+  it("has no empty strings", () => {
+    for (const [key, value] of Object.entries({ ...en, ...ja })) {
+      expect(value, `empty value for ${key}`).not.toBe("");
+    }
+  });
+
+  it("translates recommendation and automatic settlement messages", () => {
+    expect(en["decision.recommended"]).toBe("AI recommendation");
+    expect(ja["decision.recommended"]).toBe("AI の推奨");
+    expect(en["decision.autoSettlesIn"]).toBe("Auto-settles in {{duration}}");
+    expect(ja["decision.autoSettlesIn"]).toBe("{{duration}}後に自動確定");
+  });
+
+  it("translates the priority column heading", () => {
+    expect(en["decision.column.priority"]).toBe("Priority");
+    expect(ja["decision.column.priority"]).toBe("優先度");
+  });
+
+  it("translates the decision priority reasons", () => {
+    expect(en["decision.priority.goal_review"]).toBe("Goal waiting to close");
+    expect(en["decision.priority.task_in_progress"]).toBe("A task in progress is blocked");
+    expect(en["decision.priority.queued"]).toBe("Queued");
+    expect(en["decision.priority.auto_settles"]).toBe("Settles by default on its own");
+    expect(ja["decision.priority.goal_review"]).toBe("goal の完了待ち");
+    expect(ja["decision.priority.task_in_progress"]).toBe("作業中のタスクが止まっている");
+    expect(ja["decision.priority.queued"]).toBe("待機中");
+    expect(ja["decision.priority.auto_settles"]).toBe("既定の選択肢で自動確定");
+  });
+
+  it("keeps dotted keys flat rather than nested", () => {
+    for (const key of Object.keys(en)) {
+      expect(typeof en[key as keyof typeof en]).toBe("string");
+    }
+  });
+});
+
+describe("build locale", () => {
+  it("initializes i18next from the compile-time locale", () => {
+    expect(i18n.language).toBe(BUILD_LOCALE);
+  });
+});
+
+describe("translation", () => {
+  it("returns the string for the active language", async () => {
+    await i18n.changeLanguage("en");
+    expect(t("dashboard.title")).toBe(en["dashboard.title"]);
+    await i18n.changeLanguage("ja");
+    expect(t("dashboard.title")).toBe(ja["dashboard.title"]);
+    await i18n.changeLanguage("en");
+  });
+
+  it("interpolates named params", () => {
+    expect(t("state.loadingLabel", { label: "Now" })).toContain("Now");
+  });
+
+  it("does not treat a colon in copy as a namespace separator", () => {
+    // @ts-expect-error 存在しないキーは型で拒否される。この行がエラーにならなくなったら型が緩んだ
+    expect(t("definitely:not:a:key")).toBe("definitely:not:a:key");
+  });
+});
+
+describe("formatDateTime", () => {
+  it("formats per locale", () => {
+    const iso = "2026-08-16T09:48:32Z";
+    expect(formatDateTime("en", iso)).not.toBe(formatDateTime("ja", iso));
+    expect(formatDateTime("ja", iso)).toContain("2026");
+  });
+
+  it("returns the input when it is not a date", () => {
+    expect(formatDateTime("en", "not-a-date")).toBe("not-a-date");
+  });
+});
+
+describe("formatDuration", () => {
+  it("uses translated units", () => {
+    expect(formatDuration("en", 42)).toBe("42s");
+    expect(formatDuration("en", 8115)).toBe("2h 15m");
+    expect(formatDuration("ja", 42)).toBe("42\u79d2");
+    expect(formatDuration("ja", 8115)).toBe("2\u6642\u959315\u5206");
+  });
+
+  it("renders zero as a dash", () => {
+    expect(formatDuration("en", 0)).toBe("-");
+  });
+});

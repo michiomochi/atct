@@ -1,0 +1,710 @@
+// @ts-expect-error The test runs in Node, but this project does not include Node type declarations.
+import { readdirSync, readFileSync } from "node:fs";
+// @ts-expect-error The test runs in Node, but this project does not include Node type declarations.
+import { dirname, extname, join, relative, resolve } from "node:path";
+// @ts-expect-error The test runs in Node, but this project does not include Node type declarations.
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import decisionFormSource from "../components/DecisionAnswerForm.tsx?raw";
+import decisionHistoryTableSource from "../components/DecisionHistoryTable.tsx?raw";
+import decisionTableSource from "../components/DecisionTable.tsx?raw";
+import goalCreateFormSource from "../components/GoalCreateForm.tsx?raw";
+import goalDetailSource from "../components/GoalDetail.tsx?raw";
+import goalTableSource from "../components/GoalTable.tsx?raw";
+import dashboardSource from "../components/Dashboard.tsx?raw";
+import localeSwitchSource from "../components/LocaleSwitch.tsx?raw";
+import shellSource from "../layouts/Shell.astro?raw";
+import sectionSource from "../components/Section.tsx?raw";
+import stateMessageSource from "../components/StateMessage.tsx?raw";
+import taskTableSource from "../components/TaskTable.tsx?raw";
+import taskDetailPageSource from "../components/TaskDetailPage.tsx?raw";
+import taskCommitListSource from "../components/TaskCommitList.tsx?raw";
+import { formatDateTime, formatDuration, type Locale } from "../i18n";
+import uiSource from "./ui.ts?raw";
+import type { Goal, TaskView } from "./api";
+import {
+  DECISION_EVENT_NAMES,
+  activeSnoozeUntil,
+  decisionAutoSettlementSeconds,
+  decisionKindLabel,
+  decisionRecommendationLabel,
+  decisionSettlementLabel,
+  filterDecisionsByTask,
+  hasCompletionReport,
+  isDecisionEventName,
+  resolveRouteID,
+  sortTasksByOrder,
+  statusLabel,
+  taskStatusLabel,
+  validateAnswer,
+  groupGoalsByProject,
+  headline,
+  body,
+  stripHeadingMarker,
+} from "./ui";
+
+const sourceDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const componentsDirectory = join(sourceDirectory, "components");
+
+interface DirectoryEntry {
+  name: string;
+  isDirectory: () => boolean;
+}
+
+function sourceFiles(directory: string): string[] {
+  return (readdirSync(directory, { withFileTypes: true }) as DirectoryEntry[]).flatMap((entry) => {
+    const filePath = join(directory, entry.name);
+    return entry.isDirectory() ? sourceFiles(filePath) : [filePath];
+  });
+}
+
+function isSourceFile(filePath: string) {
+  return /\.(?:astro|[cm]?[jt]sx?)$/.test(filePath);
+}
+
+function isTestFile(filePath: string) {
+  return /(?:\.test|\.spec)\.[^.]+$/.test(filePath);
+}
+
+function importsComponent(importerPath: string, specifier: string, componentPath: string) {
+  if (!specifier.startsWith(".")) return false;
+  const cleanSpecifier = specifier.split("?", 1)[0];
+  const importedPath = resolve(dirname(importerPath), cleanSpecifier);
+  return importedPath === componentPath || `${importedPath}.tsx` === componentPath;
+}
+
+function importedSpecifiers(source: string) {
+  const specifiers: string[] = [];
+  const importPattern = /\bimport\s+(?:type\s+)?(?:[^"'()]*?\s+from\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+  for (const match of source.matchAll(importPattern)) {
+    specifiers.push(match[1] ?? match[2]);
+  }
+  return specifiers;
+}
+
+describe("component liveness", () => {
+  it("requires every component to be imported outside its own test", () => {
+    const components = sourceFiles(componentsDirectory).filter(
+      (filePath) => extname(filePath) === ".tsx" && !isTestFile(filePath),
+    );
+    const importers = sourceFiles(sourceDirectory).filter(
+      (filePath) => isSourceFile(filePath) && !isTestFile(filePath),
+    );
+    const unreferenced = components
+      .filter((componentPath) => !importers.some((importerPath) => {
+        if (importerPath === componentPath) return false;
+        return importedSpecifiers(String(readFileSync(importerPath, "utf8"))).some((specifier) =>
+          importsComponent(importerPath, specifier, componentPath));
+      }))
+      .map((filePath) => relative(componentsDirectory, filePath));
+
+    expect(unreferenced, `Unreferenced components: ${unreferenced.join(", ")}`).toEqual([]);
+  });
+});
+
+function fixtureGoal(id: string, projectName: string): Goal {
+  return {
+    id,
+    project_id: projectName.toLowerCase(),
+    project_name: projectName,
+    content: id,
+    spec: "",
+    plan: "",
+    status: "active",
+    awaiting_decision: false,
+    result_summary: "",
+    work_done: "",
+    now_possible: "",
+    how_to_verify: "",
+    surprises: "",
+    needs_review: "",
+    next_goals: [],
+    created_at: "",
+    updated_at: "",
+    tasks: [],
+  };
+}
+
+function fixtureTask(id: string, order: number): TaskView {
+  return {
+    id,
+    goal_id: "goal-1",
+    title: id,
+    description: "",
+    status: "todo",
+    agent: "fixture-agent",
+    order,
+    declare_key: "fixture-declare",
+    claimed_by: "fixture-run",
+    created_at: "",
+    updated_at: "",
+    held_for_seconds: 0,
+    open_decisions: [],
+    project_id: "project-1",
+    project_name: "Fixture project",
+  };
+}
+
+describe("stripHeadingMarker", () => {
+  it.each([
+    ["# T", "T"],
+    ["###### T", "T"],
+    ["####### T", "####### T"],
+    ["#T", "#T"],
+    ["#", ""],
+    ["#   T", "T"],
+    ["  # T", "T"],
+    ["# T #", "T #"],
+  ])("maps %j to %j", (input, expected) => {
+    expect(stripHeadingMarker(input)).toBe(expected);
+  });
+});
+
+describe("headline", () => {
+  it.each([
+    ["# T", "T"],
+    ["###### T", "T"],
+    ["####### T", "####### T"],
+    ["#T", "#T"],
+    ["#", ""],
+    ["#   T", "T"],
+    ["  # T", "T"],
+    ["# T #", "T #"],
+  ])("maps first line %j to %j", (input, expected) => {
+    expect(headline(input)).toBe(expected);
+  });
+
+  it("strips a Markdown heading marker from the first line", () => {
+    expect(headline("# T\n本文")).toBe("T");
+    expect(headline("###### T")).toBe("T");
+    expect(headline("#   T")).toBe("T");
+    expect(headline("  # T")).toBe("T");
+  });
+
+  it("keeps lines that are not heading markers", () => {
+    expect(headline("####### T")).toBe("####### T");
+    expect(headline("#T")).toBe("#T");
+    expect(headline("#")).toBe("");
+  });
+
+  it("leaves the body unchanged", () => {
+    expect(body("# T\n# 本文")).toBe("# 本文");
+  });
+});
+
+describe("groupGoalsByProject", () => {
+  it("sorts project names and keeps each project's goals together", () => {
+    const alphaGoal = fixtureGoal("alpha-1", "Alpha");
+    const zetaGoal = fixtureGoal("zeta-1", "Zeta");
+    const zetaFollowUp = fixtureGoal("zeta-2", "Zeta");
+
+    expect(groupGoalsByProject([zetaGoal, alphaGoal, zetaFollowUp])).toEqual([
+      ["Alpha", [alphaGoal]],
+      ["Zeta", [zetaGoal, zetaFollowUp]],
+    ]);
+  });
+});
+
+describe("sortTasksByOrder", () => {
+  it("sorts tasks by ascending order without mutating the input", () => {
+    const tasks = [fixtureTask("task-two", 2), fixtureTask("task-zero", 0), fixtureTask("task-one", 1)];
+    const original = [...tasks];
+
+    expect(sortTasksByOrder(tasks).map((task) => task.id)).toEqual([
+      "task-zero",
+      "task-one",
+      "task-two",
+    ]);
+    expect(tasks).toEqual(original);
+  });
+
+  it("keeps duplicate order values without throwing or dropping tasks", () => {
+    const tasks = [fixtureTask("task-two", 2), fixtureTask("task-one-a", 1), fixtureTask("task-one-b", 1)];
+
+    expect(() => sortTasksByOrder(tasks)).not.toThrow();
+    expect(sortTasksByOrder(tasks)).toHaveLength(3);
+    expect(sortTasksByOrder(tasks).map((task) => task.order)).toEqual([1, 1, 2]);
+  });
+});
+
+describe("goal detail helpers", () => {
+  it("reports whether any of the five completion fields is filled", () => {
+    const emptyReport = {
+      work_done: "",
+      now_possible: "  ",
+      how_to_verify: "",
+      surprises: "",
+      needs_review: "",
+    };
+
+    expect(hasCompletionReport(emptyReport)).toBe(false);
+    expect(hasCompletionReport({ ...emptyReport, needs_review: "Check the migration" })).toBe(true);
+  });
+
+  it("keeps only decisions belonging to the requested task", () => {
+    const taskOneDecision = { id: "decision-1", task_id: "task-1" };
+    const taskTwoDecision = { id: "decision-2", task_id: "task-2" };
+
+    expect(filterDecisionsByTask([taskOneDecision, taskTwoDecision], "task-1")).toEqual([taskOneDecision]);
+    expect(filterDecisionsByTask([taskOneDecision, taskTwoDecision], "task-2")).toEqual([taskTwoDecision]);
+    expect(filterDecisionsByTask([taskOneDecision, taskTwoDecision], "task-3")).toEqual([]);
+  });
+
+  it("does not include other-task or unattached decisions", () => {
+    const taskOneDecision = { id: "decision-1", task_id: "task-1" };
+    const taskTwoDecision = { id: "decision-2", task_id: "task-2" };
+    const unattachedDecision = { id: "decision-unattached", task_id: "" };
+    const decisions = [taskOneDecision, taskTwoDecision, unattachedDecision];
+
+    expect(filterDecisionsByTask(decisions, "task-1")).toEqual([taskOneDecision]);
+    expect(filterDecisionsByTask(decisions, "")).toEqual([]);
+  });
+});
+
+describe("formatDuration", () => {
+  it.each([
+    [0, "en", "-"],
+    [45, "en", "45s"],
+    [60, "en", "1m"],
+    [135, "en", "2m"],
+    [3600, "en", "1h 0m"],
+    [8115, "en", "2h 15m"],
+    [90061, "en", "25h 1m"],
+    [42, "ja", "42\u79d2"],
+    [135, "ja", "2\u5206"],
+    [3600, "ja", "1\u6642\u95930\u5206"],
+    [8115, "ja", "2\u6642\u959315\u5206"],
+    [90061, "ja", "25\u6642\u95931\u5206"],
+  ] as [number, Locale, string][]) ("formats %i seconds in %s as %s", (seconds, locale, expected) => {
+    expect(formatDuration(locale, seconds)).toBe(expected);
+  });
+});
+
+describe("validateAnswer", () => {
+  it("requires at least one of label and text", () => {
+    expect(validateAnswer({ answer_label: "  ", answer_text: "" })).toEqual({
+      answer_label: "Enter a label or answer text.",
+      answer_text: "Enter a label or answer text.",
+    });
+  });
+
+  it("accepts a label or answer text", () => {
+    expect(validateAnswer({ answer_label: "approve", answer_text: "" })).toEqual({});
+    expect(validateAnswer({ answer_label: "", answer_text: "Reason" })).toEqual({});
+  });
+});
+
+describe("localized UI labels", () => {
+  it("formats dates for both supported locales", () => {
+    const iso = "2026-08-15T00:00:00Z";
+    expect(formatDateTime("en", iso)).toContain("Aug");
+    expect(formatDateTime("ja", iso)).toContain("2026");
+    expect(formatDateTime("en", iso)).not.toBe(formatDateTime("ja", iso));
+  });
+
+  it("returns invalid dates unchanged", () => {
+    expect(formatDateTime("en", "not-a-date")).toBe("not-a-date");
+  });
+
+  it.each([
+    ["en", "todo", "Not started"],
+    ["en", "doing", "In progress"],
+    ["en", "done", "Completed"],
+    ["en", "open", "Awaiting answer"],
+    ["en", "answered", "Answered"],
+    ["en", "applied", "Applied"],
+    ["en", "approved", "Approved"],
+    ["en", "rejected", "Rejected"],
+    ["en", "withdrawn", "Withdrawn"],
+    ["en", "active", "In progress"],
+    ["en", "completed", "Completed"],
+    ["ja", "todo", "\u672a\u7740\u624b"],
+    ["ja", "doing", "\u9032\u884c\u4e2d"],
+    ["ja", "done", "\u5b8c\u4e86"],
+    ["ja", "open", "\u56de\u7b54\u5f85\u3061"],
+    ["ja", "answered", "\u56de\u7b54\u6e08\u307f"],
+    ["ja", "applied", "\u9069\u7528\u6e08\u307f"],
+    ["ja", "approved", "\u627f\u8a8d\u6e08\u307f"],
+    ["ja", "rejected", "\u5374\u4e0b\u6e08\u307f"],
+    ["ja", "withdrawn", "\u53d6\u308a\u4e0b\u3052\u6e08\u307f"],
+    ["ja", "active", "\u9032\u884c\u4e2d"],
+    ["ja", "completed", "\u5b8c\u4e86"],
+  ])("labels %s/%s as %s", (locale, status, expected) => {
+    expect(statusLabel(locale as Locale, status)).toBe(expected);
+  });
+
+  it("translates dropped task statuses", () => {
+    expect(statusLabel("ja", "dropped")).toBe("取り下げ");
+    expect(statusLabel("ja", "dropped")).not.toBe("dropped");
+  });
+
+  it.each([
+    ["en", "todo", 0, "", "Not started"],
+    ["en", "todo", 1, "", "Awaiting decision"],
+    ["en", "doing", 1, "", "In progress"],
+    ["en", "done", 1, "", "Completed"],
+    ["en", "todo", 0, "atct-42-exec-690", "In progress"],
+    ["ja", "todo", 0, "atct-42-exec-690", "\u9032\u884c\u4e2d"],
+    ["en", "todo", 1, "atct-42-exec-690", "Awaiting decision"],
+    ["en", "done", 0, "atct-42-exec-690", "Completed"],
+    ["en", "todo", 0, 0, "Not started"],
+    ["en", "todo", 0, 2315, "In progress"],
+    ["ja", "todo", 0, 2315, "\u9032\u884c\u4e2d"],
+    ["en", "todo", 1, 2315, "Awaiting decision"],
+  ])(
+    "labels task status %s/%s with %s open decisions claimed by %s as %s",
+    (locale, status, openDecisionCount, claimedBy, expected) => {
+      expect(
+        taskStatusLabel(locale as Locale, status as string, openDecisionCount as number, claimedBy),
+      ).toBe(expected);
+    },
+  );
+
+  it("returns only valid future snooze deadlines", () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+    expect(activeSnoozeUntil(future)).toBe(future);
+    expect(activeSnoozeUntil(past)).toBeUndefined();
+    expect(activeSnoozeUntil(undefined)).toBeUndefined();
+    expect(activeSnoozeUntil("not-a-date")).toBeUndefined();
+  });
+
+  it.each([
+    ["en", "decision", "Decision"],
+    ["en", "completion", "Completion"],
+    ["ja", "decision", "\u5224\u65ad"],
+    ["ja", "completion", "\u5b8c\u4e86"],
+  ])("labels %s kind %s as %s", (locale, kind, expected) => {
+    expect(decisionKindLabel(locale as Locale, kind)).toBe(expected);
+  });
+
+  it("labels decisions settled by the default after a timeout", () => {
+    expect(decisionSettlementLabel("en", true)).toBe("Settled by default after timeout");
+    expect(decisionSettlementLabel("ja", true)).toBe("期限切れのため既定値で確定");
+    expect(decisionSettlementLabel("en", false)).toBeUndefined();
+  });
+
+  it("marks the option matching the AI recommendation", () => {
+    expect(decisionRecommendationLabel("en", "A", "A")).toBe("AI recommendation");
+    expect(decisionFormSource).toContain("decisionRecommendationLabel");
+  });
+
+  it("does not mark an option when there is no recommendation", () => {
+    expect(decisionRecommendationLabel("en", "", "A")).toBeUndefined();
+    expect(decisionRecommendationLabel("en", "A", "B")).toBeUndefined();
+  });
+
+  it("formats an automatic settlement deadline in human-readable units", () => {
+    const seconds = decisionAutoSettlementSeconds(1_800_000);
+    expect(seconds).toBe(1_800);
+    expect(formatDuration("en", seconds ?? 0)).toBe("30m");
+    expect(formatDuration("ja", seconds ?? 0)).toBe("30分");
+    expect(decisionAutoSettlementSeconds(undefined)).toBeUndefined();
+    expect(decisionFormSource).toContain("decision.autoSettlesIn");
+    expect(decisionTableSource).toContain("decisionAutoSettlementSeconds");
+  });
+});
+
+describe("localized date and duration renderers", () => {
+  it("routes timestamps and claims through the shared locale formatters", () => {
+    const dateSources = [goalTableSource, decisionTableSource];
+    const durationSources = [taskTableSource];
+
+    for (const source of dateSources) {
+      expect(source).toContain("formatDateTime");
+      expect(source).not.toContain("formatDate(");
+    }
+    for (const source of durationSources) {
+      expect(source).toContain("formatDuration");
+      expect(source).not.toContain("formatHeldFor(");
+    }
+  });
+});
+
+describe("decision SSE events", () => {
+  it("keeps the subscribed event names exact", () => {
+    expect(DECISION_EVENT_NAMES).toEqual([
+      "decision.created",
+      "decision.answered",
+      "decision.withdrawn",
+      "decision.applied",
+      "decision.approved",
+      "decision.rejected",
+      "goal.created",
+      "goal.withdrawn",
+      "task.handoff.request",
+      "task.handoff.receive",
+      "task.handoff.review.request",
+      "task.handoff.review.receive",
+      "task.handoff.review.reject",
+      "task.handoff.complete",
+      "goal.handoff.request",
+      "goal.handoff.receive",
+      "goal.handoff.review.request",
+      "goal.handoff.review.receive",
+      "goal.handoff.review.reject",
+      "goal.handoff.complete",
+      "plan.handoff.review.request",
+      "plan.handoff.review.receive",
+      "plan.handoff.review.reject",
+      "plan.handoff.complete",
+      "detection.completion_report_missing",
+      "detection.commits_missing",
+      "detection.undeclared_goal",
+      "detection.all_tasks_dropped",
+      "detection.unclaimed_doing",
+      "detection.handoff_unreceived",
+      "detection.handoff_unreported",
+      "handoff_reported",
+      "handoff_entry_added",
+      "detection.claim_undelegated",
+      "detection.decision_answered_unapplied",
+      "detection.decision_default_unapplied",
+      "detection.claim_stale",
+    ]);
+  });
+
+  it("ignores unrelated event names", () => {
+    expect(isDecisionEventName("decision.applied")).toBe(true);
+    expect(isDecisionEventName("task.claimed")).toBe(false);
+  });
+});
+
+describe("goal history IDs", () => {
+  it.each([
+    ["_", "/goals/abc123", "abc123"],
+    ["_", "/goals/abc123/", "abc123"],
+    ["_", "/goals/a%2Fb", "a/b"],
+    ["known", "/goals/other", "known"],
+  ])("resolves %s at %s to %s", (id, pathname, expected) => {
+    expect(resolveRouteID(id, pathname, "/goals/")).toBe(expected);
+  });
+
+  it("resolves a sentinel using a supplied URL prefix", () => {
+    expect(resolveRouteID("_", "/tasks/task123", "/tasks/")).toBe("task123");
+  });
+});
+
+describe("Kumo font tracking", () => {
+  it("keeps tracking classes out of every audited source", () => {
+    const sourceFiles: Array<{ name: string; source: string }> = [
+      { name: "GoalDetail.tsx", source: goalDetailSource },
+      { name: "TaskDetailPage.tsx", source: taskDetailPageSource },
+      { name: "Dashboard.tsx", source: dashboardSource },
+      { name: "DecisionTable.tsx", source: decisionTableSource },
+      { name: "GoalTable.tsx", source: goalTableSource },
+      { name: "Section.tsx", source: sectionSource },
+      { name: "TaskTable.tsx", source: taskTableSource },
+      { name: "DecisionHistoryTable.tsx", source: decisionHistoryTableSource },
+      { name: "Shell.astro", source: shellSource },
+    ];
+
+    expect(sourceFiles).toHaveLength(9);
+    expect(sourceFiles.every(({ source }) => source.length > 0)).toBe(true);
+
+    const trackingMatches = sourceFiles.flatMap(({ name, source }) =>
+      (source.match(/\btracking-[\w-]+/g) ?? []).map((match) => `${name}: ${match}`),
+    );
+
+    expect(trackingMatches).toEqual([]);
+  });
+});
+
+describe("Kumo content text size", () => {
+  it("keeps disallowed content text sizes out of audited source files", () => {
+    const auditedSources: Array<{ name: string; source: string }> = [
+      { name: "GoalCreateForm.tsx", source: goalCreateFormSource },
+      { name: "LocaleSwitch.tsx", source: localeSwitchSource },
+      { name: "TaskCommitList.tsx", source: taskCommitListSource },
+      { name: "Section.tsx", source: sectionSource },
+      { name: "Dashboard.tsx", source: dashboardSource },
+      { name: "GoalDetail.tsx", source: goalDetailSource },
+      { name: "DecisionHistoryTable.tsx", source: decisionHistoryTableSource },
+      { name: "DecisionTable.tsx", source: decisionTableSource },
+      { name: "StateMessage.tsx", source: stateMessageSource },
+      { name: "DecisionAnswerForm.tsx", source: decisionFormSource },
+      { name: "TaskTable.tsx", source: taskTableSource },
+      { name: "GoalTable.tsx", source: goalTableSource },
+      { name: "TaskDetailPage.tsx", source: taskDetailPageSource },
+    ];
+
+    expect(auditedSources).toHaveLength(13);
+    expect(auditedSources.every(({ source }) => source.length > 0)).toBe(true);
+
+    const classNameLines = auditedSources.flatMap(({ name, source }) =>
+      source
+        .split("\n")
+        .filter((line) => line.includes("className"))
+        .map((line) => `${name}: ${line}`),
+    );
+    expect(classNameLines.length).toBeGreaterThanOrEqual(36);
+
+    const forbiddenTextPatterns = [
+      /\btext-(?:xs|sm)\b/,
+      /\btext-\[[^\]]+\]/,
+    ];
+    const violations = auditedSources.flatMap(({ name, source }) =>
+      source.split("\n").flatMap((line, lineNumber) =>
+        forbiddenTextPatterns.some((pattern) => pattern.test(line))
+          ? [`${name}:${lineNumber + 1}: ${line.trim()}`]
+          : [],
+      ),
+    );
+
+    expect(violations).toEqual([]);
+  });
+});
+
+describe("Kumo table headers", () => {
+  it("keeps table headers out of uppercase styling", () => {
+    const componentSources: string[] = [
+      decisionTableSource,
+      goalTableSource,
+      taskTableSource,
+      readFileSync(join(componentsDirectory, "DecisionHistoryTable.tsx"), "utf8"),
+    ];
+    const tableHeaderLines = componentSources.flatMap((source) =>
+      source.split("\n").filter((line) => line.includes("Table.Header")),
+    );
+
+    expect(tableHeaderLines.length).toBeGreaterThan(0);
+    expect(tableHeaderLines.filter((line) => line.includes("uppercase"))).toEqual([]);
+  });
+});
+
+describe("Kumo buttons", () => {
+  it("keeps button semantics and the shared focus ring", () => {
+    const componentSources = [decisionFormSource, stateMessageSource, taskTableSource];
+
+    for (const source of componentSources) {
+      expect(source).toContain('from "@cloudflare/kumo/components/button"');
+      expect(source).not.toContain("@base-ui/react");
+      expect(source).toContain("focus-ring");
+      expect(source).toContain('type="button"');
+      expect(source).toContain("onClick=");
+    }
+
+    expect(decisionFormSource).toContain('type="submit"');
+    expect(decisionFormSource).toContain("disabled={submitting}");
+    expect(stateMessageSource).toContain("disabled:cursor-wait disabled:opacity-60");
+    expect(taskTableSource).toContain("disabled={releasing}");
+    expect(taskTableSource).toContain("if (!task.claimed_by)");
+  });
+});
+
+describe("goal detail answer flows", () => {
+  it("renders all completion report fields and supports legacy summaries", () => {
+    for (const field of [
+      "work_done",
+      "now_possible",
+      "how_to_verify",
+      "surprises",
+      "needs_review",
+    ]) {
+      expect(goalDetailSource).toContain(`goal.${field}`);
+    }
+
+    for (const key of [
+      "goal.completion.report.workDone",
+      "goal.completion.report.nowPossible",
+      "goal.completion.report.howToVerify",
+      "goal.completion.report.surprises",
+      "goal.completion.report.needsReview",
+    ]) {
+      expect(goalDetailSource).toContain(key);
+    }
+
+    expect(goalDetailSource).toContain("result_summary");
+    expect(goalDetailSource).toContain("min-w-0");
+    expect(goalDetailSource).toContain("break-words");
+  });
+
+  it("renders one ordered task list and moves decisions into task details", () => {
+    expect(goalDetailSource).not.toContain("NeedsDecisionList");
+    expect(goalDetailSource).not.toContain("xl:grid-cols-3");
+    expect(goalDetailSource).toContain("const tasks = data?.goal.goal.tasks ?? [];");
+    expect(goalDetailSource).toContain("tasks={tasks}");
+    expect(goalDetailSource).toContain('mode="goal"');
+    expect(goalDetailSource).toContain("decisionHistory={data.goal.decision_history}");
+    expect(taskTableSource).toContain('mode: "now" | "needs_decision" | "next" | "goal"');
+    expect(uiSource).toContain("left.order - right.order");
+    expect(taskTableSource).toContain("sortTasksByOrder");
+    expect(goalTableSource).toContain("sortTasksByOrder");
+    expect(taskDetailPageSource).toContain("DecisionHistoryTable");
+    expect(taskDetailPageSource).toContain("DecisionAnswerForm");
+    expect(taskDetailPageSource).toContain("fetchTask");
+    expect(taskDetailPageSource).toContain("subscribeToDecisionEvents");
+    expect(taskDetailPageSource).toContain('t("state.updateAvailable")');
+    expect(taskTableSource).not.toContain("TaskDetailModal");
+    expect(taskTableSource).toContain("<Table");
+    expect(taskTableSource).toContain("table-scroll");
+  });
+
+  it("keeps the goal task toggle pointer-interactive", () => {
+    expect(goalTableSource).toContain(
+      'className="focus-ring shrink-0 cursor-pointer text-ink-700 hover:text-ink-950"',
+    );
+  });
+
+  it("exposes the decision approval API in Goal detail", () => {
+    expect(goalDetailSource).toContain("fetchGoal");
+    expect(goalDetailSource).toContain("unattached_decisions");
+    expect(goalDetailSource).toContain("approveDecision");
+    expect(goalDetailSource).toContain("rejectDecision");
+    expect(goalDetailSource).toContain('t("goal.review.title")');
+    expect(goalDetailSource).not.toContain("CompletionApproval");
+    expect(goalDetailSource).toContain("result_summary");
+  });
+
+  it("keys the remaining Goal detail framing strings", () => {
+    expect(goalDetailSource).toContain("useTranslation");
+    expect(goalDetailSource).toContain('t("goal.tasks.title")');
+    expect(goalDetailSource).toContain('t("goal.column.status")');
+    expect(goalDetailSource).toContain('t("goal.column.updatedAt")');
+    expect(taskTableSource).toContain('t("task.claim.release")');
+    expect(taskTableSource).toContain('t("duration.none")');
+    expect(decisionFormSource).toContain('t("form.answer.submit")');
+  });
+
+  it("localizes the Decision kind", () => {
+    expect(decisionTableSource).toContain("decisionKindLabel");
+  });
+
+  it("keeps the Shell ATCT link pointed at the home page", () => {
+    expect(shellSource).toContain('href="/"');
+  });
+
+  it("keeps locale ownership on the server", () => {
+    expect(localeSwitchSource).not.toContain("localStorage");
+    expect(localeSwitchSource).not.toContain("navigator.language");
+    expect(localeSwitchSource).not.toContain("useEffect");
+    expect(localeSwitchSource).not.toContain("changeLanguage");
+    expect(localeSwitchSource).toContain("updateUILocale");
+    expect(localeSwitchSource).toContain("window.location.reload");
+    expect(dashboardSource).not.toContain("readStoredLocale");
+    expect(dashboardSource).not.toContain("changeLanguage");
+    expect(goalDetailSource).not.toContain("readStoredLocale");
+    expect(goalDetailSource).not.toContain("changeLanguage");
+  });
+
+  it("keeps goal creation in Active goals with all required states", () => {
+    expect(goalCreateFormSource).toContain("fetchProjects");
+    expect(goalCreateFormSource).toContain("createGoal");
+    expect(goalCreateFormSource).toContain('t("form.goal.noProject")');
+    expect(goalCreateFormSource).toContain('t("form.goal.project.placeholder")');
+    expect(goalCreateFormSource).toContain('name="content"');
+    expect(goalCreateFormSource).toContain("status === 409");
+    expect(goalCreateFormSource).toContain('t("form.goal.action.creating")');
+    expect(goalCreateFormSource).toContain("role=\"alert\"");
+  });
+
+  it("uses translated dashboard framing with stable section anchors", () => {
+    expect(dashboardSource).toContain("useTranslation");
+    expect(dashboardSource).toContain('id="open-decisions"');
+    expect(dashboardSource).toContain('id="active-goals"');
+    expect(dashboardSource).toContain('t("dashboard.goals.empty")');
+    expect(sectionSource).toContain("id: string");
+    expect(sectionSource).toContain("aria-labelledby={`${id}-heading`}");
+  });
+});

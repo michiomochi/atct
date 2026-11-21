@@ -1,0 +1,2583 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/michiomochi/atct-archive/internal/daemonctl"
+)
+
+func TestWatchEnsuresDaemonAfterConnectionFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: revived)"}
+
+	ensured := false
+	ensureCalls := 0
+	snapshotCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"decisions":[{"id":"revived","status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	snapshot := func(context.Context) (string, []watchDecision, error) {
+		snapshotCalls++
+		if !ensured {
+			return "", nil, errors.New("daemon unavailable")
+		}
+		return server.URL, nil, nil
+	}
+	ensure := func() error {
+		ensureCalls++
+		ensured = true
+		return nil
+	}
+
+	err := watchLoopWithEnsure(ctx, &output, &http.Client{}, time.Millisecond, snapshot, ensure)
+	if err != nil {
+		t.Fatalf("watchLoopWithEnsure() error = %v", err)
+	}
+	if ensureCalls != 1 {
+		t.Fatalf("Ensure calls = %d, want 1", ensureCalls)
+	}
+	if snapshotCalls < 2 {
+		t.Fatalf("snapshot calls = %d, want a retry after Ensure", snapshotCalls)
+	}
+	if got := output.String(); !strings.Contains(got, "atct decision answered (decision_id: revived)\n") {
+		t.Fatalf("watch output = %q, want revived notification", got)
+	}
+}
+
+func TestReadWatchSSEFramesPreservesStableID(t *testing.T) {
+	ctx := context.Background()
+	frames, done := readWatchSSEFrames(ctx, strings.NewReader("id: 7:12\nevent: goal.handoff.review.request\ndata: {\"goal_id\":7}\n\n"))
+	frame, ok := <-frames
+	if !ok {
+		t.Fatal("readWatchSSEFrames closed before delivering frame")
+	}
+	if frame.id != "7:12" || frame.name != "goal.handoff.review.request" {
+		t.Fatalf("frame = %+v, want stable id and event name", frame)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("readWatchSSEFrames: %v", err)
+	}
+}
+
+func TestConsumeWatchEventsIgnoresEventIDAndCursor(t *testing.T) {
+	var cursorCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events":
+			if got := r.URL.Query().Get("watcher_key"); got != "" {
+				t.Errorf("watcher_key = %q, want it omitted", got)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "id: 1:12\nevent: decision.answered\ndata: {\"id\":\"payload\",\"default_applied_at\":null}\n\n")
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"decisions":[{"id":12,"goal_id":2,"status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/watch/cursor":
+			cursorCalls++
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	err := consumeWatchEventsWithStateAndScopeAndSinkAndCursor(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		time.Second, make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), nil, "watcher-1",
+	)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("consumeWatchEvents error = %v, want EOF", err)
+	}
+	if got := output.String(); got != "atct decision answered (decision_id: 12)\n" {
+		t.Fatalf("watch output = %q, want canonical notification", got)
+	}
+	if cursorCalls != 0 {
+		t.Fatalf("cursor acknowledgements = %d, want 0", cursorCalls)
+	}
+}
+
+func TestReconcileWatchScopeDoesNotAdvanceCursor(t *testing.T) {
+	var cursorCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"decisions":[{"id":12,"goal_id":2,"status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/watch/cursor":
+			cursorCalls++
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	err := reconcileWatchScope(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), nil, "watcher-1",
+	)
+	if err != nil {
+		t.Fatalf("reconcileWatchScope: %v", err)
+	}
+	if got := output.String(); got != "atct decision answered (decision_id: 12)\n" {
+		t.Fatalf("reconciliation output = %q", got)
+	}
+	if cursorCalls != 0 {
+		t.Fatalf("cursor calls = %d, want 0", cursorCalls)
+	}
+}
+
+func TestReconcileWatchScopeDoesNotAdvanceCursorAfterRenderFailure(t *testing.T) {
+	var cursorCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"decisions":[{"id":11,"goal_id":2,"status":"answered"},{"id":12,"goal_id":2,"status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/watch/cursor":
+			cursorCalls++
+			http.Error(w, "cursor route should be absent", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	rendered := 0
+	err := reconcileWatchScope(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), func(string) error {
+			rendered++
+			if rendered == 2 {
+				return errors.New("render failed")
+			}
+			return nil
+		}, "watcher-1",
+	)
+	if err == nil {
+		t.Fatal("reconcileWatchScope error = nil, want render failure")
+	}
+	if cursorCalls != 0 {
+		t.Fatalf("cursor calls = %d, want 0 before all rendering succeeds", cursorCalls)
+	}
+}
+
+func TestReconcileWatchScopeIgnoresDeliveryFields(t *testing.T) {
+	var cursorCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"current_sequence":12,"high_watermark":11,"decisions":[{"id":11,"goal_id":2,"status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/watch/cursor":
+			cursorCalls++
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	err := reconcileWatchScope(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), nil, "watcher-1",
+	)
+	if err != nil {
+		t.Fatalf("reconcileWatchScope: %v", err)
+	}
+	if got := output.String(); got != "atct decision answered (decision_id: 11)\n" {
+		t.Fatalf("reconciliation output = %q", got)
+	}
+	if cursorCalls != 0 {
+		t.Fatalf("cursor calls = %d, want 0", cursorCalls)
+	}
+}
+
+func TestReconcileWatchScopeRendersCanonicalDecisionState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/events/reconcile" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"goals":[],"tasks":[],"decisions":[{"id":41,"goal_id":2,"status":"open"},{"id":42,"goal_id":2,"status":"answered"},{"id":43,"goal_id":2,"status":"applied"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	err := reconcileWatchScope(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), nil, "watcher-1",
+	)
+	if err != nil {
+		t.Fatalf("reconcileWatchScope: %v", err)
+	}
+	want := "atct decision pending (decision_id: 41)\n" +
+		"atct decision answered (decision_id: 42)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("canonical reconciliation output = %q, want %q", got, want)
+	}
+}
+
+func TestReconcileWatchScopeProjectsNewGoalAfterConnectedSignal(t *testing.T) {
+	responses := []string{
+		`{"goals":[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"}],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`,
+		`{"goals":[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"},{"id":7,"status":"active","created_at":"2026-09-19T00:01:00Z"}],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`,
+		`{"goals":[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"},{"id":7,"status":"active","created_at":"2026-09-19T00:01:00Z"}],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`,
+	}
+	call := 0
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Query().Get("monitor_token") != "token-1" {
+			return nil, fmt.Errorf("monitor_token = %q, want token-1", req.URL.Query().Get("monitor_token"))
+		}
+		body := responses[call]
+		call++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	state := watchReconciliation{}
+	scope := watchScope{Role: "commander", ProjectID: "1", MonitorToken: "token-1"}
+	for range responses {
+		if err := reconcileWatchScope(
+			context.Background(), client, "http://daemon", scope, &output,
+			make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+			wakeupDiscrepancyDelivered, wakeupDelivered, newWatchScopeFilter(""), nil, &state,
+		); err != nil {
+			t.Fatalf("reconcileWatchScope: %v", err)
+		}
+	}
+
+	if got, want := output.String(), "atct goal created (goal_id: 7)\n"; got != want {
+		t.Fatalf("reconciliation output = %q, want %q", got, want)
+	}
+}
+
+func TestReconcileWatchScopeDoesNotProjectNewGoalForScopedWatch(t *testing.T) {
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Query().Get("monitor_token") != "token-1" {
+			return nil, fmt.Errorf("monitor_token = %q, want token-1", req.URL.Query().Get("monitor_token"))
+		}
+		goalID := req.URL.Query().Get("goal_id")
+		if goalID == "" {
+			goalID = req.URL.Query().Get("task_id")
+		}
+		if goalID == "" {
+			return nil, errors.New("scoped reconcile request has no selector")
+		}
+		body := fmt.Sprintf(`{"goals":[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"}],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		if req.URL.Query().Get("task_id") != "" {
+			body = `{"goals":[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"},{"id":7,"status":"active","created_at":"2026-09-19T00:01:00Z"}],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+
+	for _, tc := range []struct {
+		name   string
+		scope  watchScope
+		filter *watchScopeFilter
+	}{
+		{name: "goal", scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "1", MonitorToken: "token-1"}, filter: newWatchScopeFilter("1")},
+		{name: "task", scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "1", TaskID: "9", MonitorToken: "token-1"}, filter: newWatchTaskScopeFilter("9")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			lastWakeupContent := ""
+			state := watchReconciliation{}
+			if err := reconcileWatchScope(
+				context.Background(), client, "http://daemon", tc.scope, &output,
+				make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+				make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), tc.filter, nil, &state,
+			); err != nil {
+				t.Fatalf("reconcileWatchScope baseline: %v", err)
+			}
+			if err := reconcileWatchScope(
+				context.Background(), client, "http://daemon", tc.scope, &output,
+				make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+				make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), tc.filter, nil, &state,
+			); err != nil {
+				t.Fatalf("reconcileWatchScope new goal: %v", err)
+			}
+			if got := output.String(); got != "" {
+				t.Fatalf("scoped reconciliation output = %q, want empty", got)
+			}
+		})
+	}
+}
+
+func TestWatchReconcilesNewGoalAfterReconnect(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	var mu sync.Mutex
+	reconcileCalls := 0
+	eventCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("monitor_token") != "token-1" && r.URL.Path == "/api/events/reconcile" {
+			t.Errorf("monitor_token = %q, want token-1", r.URL.Query().Get("monitor_token"))
+		}
+		switch r.URL.Path {
+		case "/api/events/reconcile":
+			mu.Lock()
+			reconcileCalls++
+			call := reconcileCalls
+			mu.Unlock()
+			body := `{"goals":[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"}],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+			if call > 1 {
+				body = `{"goals":[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"},{"id":7,"status":"active","created_at":"2026-09-19T00:01:00Z"}],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, body)
+		case "/api/events":
+			mu.Lock()
+			eventCalls++
+			call := eventCalls
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/event-stream")
+			if call > 1 {
+				<-r.Context().Done()
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var got []string
+	scope := watchScope{Role: "commander", ProjectID: "1", MonitorToken: "token-1"}
+	snapshot := func(context.Context) (string, []watchDecision, error) { return server.URL, nil, nil }
+	err := watchLoopWithEnsureAndProjectIDAndScopeAndSink(
+		ctx, io.Discard, server.Client(), time.Millisecond, snapshot, nil, nil, scope,
+		func(line string) error {
+			got = append(got, line)
+			if line == "atct goal created (goal_id: 7)" {
+				cancel()
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("watch loop: %v", err)
+	}
+	if want := []string{"atct goal created (goal_id: 7)"}; !slices.Equal(got, want) {
+		t.Fatalf("watch actions = %#v, want %#v", got, want)
+	}
+	mu.Lock()
+	gotReconcileCalls, gotEventCalls := reconcileCalls, eventCalls
+	mu.Unlock()
+	if gotReconcileCalls < 2 || gotEventCalls < 1 {
+		t.Fatalf("requests after reconnect = reconcile %d, events %d; want reconcile >= 2 and events >= 1", gotReconcileCalls, gotEventCalls)
+	}
+}
+
+func TestWatchReconcilesNewGoalAfterProcessRestart(t *testing.T) {
+	const token = "token-1"
+	const recordedWatermark = "2026-09-19T00:00:00Z"
+	var healthWatermark string
+	var reconcileCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events/reconcile":
+			if r.URL.Query().Get("monitor_token") != token {
+				t.Errorf("monitor_token = %q, want %q", r.URL.Query().Get("monitor_token"), token)
+			}
+			reconcileCalls++
+			body := `{"goals":[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"}],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+			if reconcileCalls > 1 {
+				body = fmt.Sprintf(`{"monitor_last_reconciled_at":%q,"goals":[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"},{"id":7,"status":"active","created_at":"2026-09-19T00:01:00Z"}],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`, healthWatermark)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, body)
+		case "/api/monitor-health":
+			var health struct {
+				State      string `json:"state"`
+				LastSeenAt string `json:"last_seen_at"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&health); err != nil {
+				t.Errorf("decode monitor health: %v", err)
+			}
+			if health.State == "healthy" {
+				healthWatermark = health.LastSeenAt
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var firstOutput bytes.Buffer
+	firstState := watchReconciliation{}
+	firstScope := watchScope{Role: "commander", ProjectID: "1", MonitorToken: token}
+	if err := reconcileWatchScope(
+		context.Background(), server.Client(), server.URL, firstScope, &firstOutput,
+		make(map[watchDeliveryKey]struct{}), new(string),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), newWatchScopeFilter(""), nil, &firstState,
+	); err != nil {
+		t.Fatalf("first reconciliation: %v", err)
+	}
+	if firstOutput.Len() != 0 {
+		t.Fatalf("first reconciliation output = %q, want baseline silence", firstOutput.String())
+	}
+
+	healthRequest := fmt.Sprintf(`{"state":"healthy","last_seen_at":%q}`, recordedWatermark)
+	response, err := server.Client().Post(server.URL+"/api/monitor-health", "application/json", strings.NewReader(healthRequest))
+	if err != nil {
+		t.Fatalf("post monitor health: %v", err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("monitor health status = %d, want 200", response.StatusCode)
+	}
+	if healthWatermark != recordedWatermark {
+		t.Fatalf("recorded health watermark = %q, want %q", healthWatermark, recordedWatermark)
+	}
+
+	var secondOutput bytes.Buffer
+	secondState := watchReconciliation{}
+	if err := reconcileWatchScope(
+		context.Background(), server.Client(), server.URL, firstScope, &secondOutput,
+		make(map[watchDeliveryKey]struct{}), new(string),
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), newWatchScopeFilter(""), nil, &secondState,
+	); err != nil {
+		t.Fatalf("reconciliation after restart: %v", err)
+	}
+	if got, want := secondOutput.String(), "atct goal created (goal_id: 7)\n"; got != want {
+		t.Fatalf("reconciliation after restart output = %q, want %q", got, want)
+	}
+}
+
+func TestReconcileWatchScopeProjectsTasklessApprovedGoalReviewForCommanderOnly(t *testing.T) {
+	transitions := []struct {
+		name          string
+		decision      string
+		eventName     string
+		instruction   string
+		genericOutput string
+	}{
+		{name: "approval", decision: `"status":"applied","answer_label":"approve"`, eventName: "goal.review.complete", instruction: "goal.review.complete", genericOutput: "atct decision approved"},
+		{name: "rejection", decision: `"status":"answered","answer_label":"reject"`, eventName: "goal.review.reject", instruction: "goal.handoff.review.reject", genericOutput: "atct decision rejected"},
+	}
+	scopes := []struct {
+		name  string
+		scope watchScope
+		want  bool
+	}{
+		{name: "commander project scope", scope: watchScope{ProjectID: "1", Role: "commander"}, want: true},
+		{name: "goal scope", scope: watchScope{ProjectID: "1", GoalID: "42", Role: "subcommander"}},
+		{name: "task scope", scope: watchScope{ProjectID: "1", GoalID: "42", TaskID: "9", Role: "executor"}},
+	}
+
+	for _, transition := range transitions {
+		t.Run(transition.name, func(t *testing.T) {
+			body := `{"goals":[{"id":42,"status":"active"}],"decisions":[{"id":71,"goal_id":42,"kind":"goal_review",` + transition.decision + `}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+			for _, tc := range scopes {
+				t.Run(tc.name, func(t *testing.T) {
+					client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+						if req.URL.Path != "/api/events/reconcile" {
+							return nil, fmt.Errorf("unexpected request path %q", req.URL.Path)
+						}
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Status:     "200 OK",
+							Header:     http.Header{"Content-Type": []string{"application/json"}},
+							Body:       io.NopCloser(strings.NewReader(body)),
+						}, nil
+					})}
+
+					var output bytes.Buffer
+					var actions []watchAgentAction
+					lastWakeupContent := ""
+					scopeFilter := newWatchScopeFilter(tc.scope.GoalID)
+					if tc.scope.TaskID != "" {
+						scopeFilter = newWatchTaskScopeFilter(tc.scope.TaskID)
+					}
+					actionSink := watchAgentActionSink(func(action watchAgentAction) error {
+						actions = append(actions, action)
+						return nil
+					})
+					err := reconcileWatchScope(
+						context.Background(), client, "http://daemon", tc.scope, &output,
+						make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+						make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+						scopeFilter, nil, actionSink,
+					)
+					if err != nil {
+						t.Fatalf("reconcileWatchScope: %v", err)
+					}
+
+					got := output.String()
+					if tc.want {
+						if !strings.Contains(got, "commander") || !strings.Contains(got, transition.instruction) {
+							t.Fatalf("goal review output = %q, want commander %s instruction", got, transition.instruction)
+						}
+						if strings.Contains(got, transition.genericOutput) {
+							t.Fatalf("goal review output = %q, want dedicated action instead of generic decision approval", got)
+						}
+						if len(actions) != 1 || actions[0].eventName != transition.eventName {
+							t.Fatalf("goal review actions = %#v, want one %s action", actions, transition.eventName)
+						}
+						return
+					}
+					if got != "" || len(actions) != 0 {
+						t.Fatalf("scoped goal review output/actions = %q / %#v, want empty", got, actions)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestConsumeWatchEventsReconcilesEverySignalWithoutApplyingPayloadOrAcknowledging(t *testing.T) {
+	var mu sync.Mutex
+	reconcileCalls := 0
+	cursorCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "id: 1:1\nevent: decision.answered\ndata: {\"id\":\"payload-first\",\"default_applied_at\":null}\n\n")
+			_, _ = io.WriteString(w, "id: 1:3\nevent: decision.answered\ndata: {\"id\":\"payload-reordered\",\"default_applied_at\":null}\n\n")
+			_, _ = io.WriteString(w, "id: 1:1\nevent: decision.answered\ndata: {\"id\":\"payload-duplicate\",\"default_applied_at\":null}\n\n")
+		case "/api/events/reconcile":
+			mu.Lock()
+			reconcileCalls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"goals":[],"tasks":[],"decisions":[{"id":99,"goal_id":2,"status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/watch/cursor":
+			mu.Lock()
+			cursorCalls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	err := consumeWatchEventsWithStateAndScopeAndSinkAndCursor(
+		context.Background(), server.Client(), server.URL, watchScope{ProjectID: "1", GoalID: "2"}, &output,
+		time.Second, make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+		newWatchScopeFilter("2"), nil, "watcher-1",
+	)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("consumeWatchEvents error = %v, want EOF", err)
+	}
+	if got := output.String(); got != "atct decision answered (decision_id: 99)\n" {
+		t.Fatalf("watch output = %q, want one canonical notification", got)
+	}
+	if strings.Contains(output.String(), "payload-") {
+		t.Fatalf("watch output applied an SSE payload directly: %q", output.String())
+	}
+	mu.Lock()
+	gotReconcileCalls, gotCursorCalls := reconcileCalls, cursorCalls
+	mu.Unlock()
+	// One reconcile per live signal (3), plus one right after the SSE connect to
+	// cover events emitted before the subscription.
+	if gotReconcileCalls != 4 {
+		t.Fatalf("reconciliation calls = %d, want one per live signal plus one after connect", gotReconcileCalls)
+	}
+	if gotCursorCalls != 0 {
+		t.Fatalf("cursor acknowledgements = %d, want 0", gotCursorCalls)
+	}
+}
+
+func TestConsumeWatchEventsPerformsPeriodicReconciliation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	reconcileCalls := 0
+	reconciled := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "event: keepalive\ndata: {}\n\n")
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			<-r.Context().Done()
+		case "/api/events/reconcile":
+			mu.Lock()
+			reconcileCalls++
+			mu.Unlock()
+			select {
+			case reconciled <- struct{}{}:
+			default:
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- consumeWatchEventsWithStateAndScopeAndSinkAndInterval(
+			ctx, server.Client(), server.URL, watchScope{ProjectID: "1"}, &output,
+			time.Second, 5*time.Millisecond, make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+			make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}),
+			newWatchPassThroughFilter(), nil,
+		)
+	}()
+
+	select {
+	case <-reconciled:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for periodic reconciliation")
+	}
+	if err := <-errCh; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("consumeWatchEvents error = %v", err)
+	}
+	mu.Lock()
+	gotReconcileCalls := reconcileCalls
+	mu.Unlock()
+	if gotReconcileCalls < 1 {
+		t.Fatalf("reconciliation calls = %d, want periodic reconciliation", gotReconcileCalls)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("periodic empty reconciliation output = %q, want empty", output.String())
+	}
+}
+
+func TestWatchStopsEnsuringAfterFiveFailures(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{watchEnsureLimitMessage}
+
+	ensureCalls := 0
+	snapshot := func(context.Context) (string, []watchDecision, error) {
+		return "", nil, errors.New("daemon unavailable")
+	}
+	ensure := func() error {
+		ensureCalls++
+		return errors.New("database unavailable")
+	}
+
+	err := watchLoopWithEnsure(ctx, &output, &http.Client{}, time.Millisecond, snapshot, ensure)
+	if err != nil {
+		t.Fatalf("watchLoopWithEnsure() error = %v", err)
+	}
+	if ensureCalls != watchEnsureMaxFailures {
+		t.Fatalf("Ensure calls = %d, want %d", ensureCalls, watchEnsureMaxFailures)
+	}
+	got := output.String()
+	if !strings.Contains(got, "database unavailable") {
+		t.Fatalf("watch output = %q, want Ensure error", got)
+	}
+	if strings.Count(got, watchEnsureLimitMessage) != 1 {
+		t.Fatalf("watch output = %q, want one Ensure limit message", got)
+	}
+}
+
+func TestWatchRendersCanonicalDecisionStatuses(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"decision_id: human"}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[]}`)
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"decisions":[{"id":"human","status":"answered"},{"id":"default","status":"answered","default_applied_at":"2026-08-19T00:00:00Z"},{"id":"pending","status":"open"},{"id":"applied","status":"applied"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	err := watchWithURLs(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond)
+	if err != nil {
+		t.Fatalf("watchWithURLs() error = %v", err)
+	}
+
+	got := output.String()
+	want := "atct decision answered (decision_id: human)\n" +
+		"atct decision pending (decision_id: pending)\n"
+	if got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+	for _, id := range []string{"default", "applied"} {
+		if strings.Contains(got, "decision_id: "+id) {
+			t.Errorf("watch output contains suppressed decision %q: %q", id, got)
+		}
+	}
+}
+
+func TestWatchEmitsActionableWakeupEvents(t *testing.T) {
+	var output strings.Builder
+	delivered := make(map[watchDeliveryKey]struct{})
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, decision := range []watchDecision{
+		{WakeupID: "wakeup-1"},
+		{WakeupID: "wakeup-2", UnstartedTaskCount: 1},
+	} {
+		if err := emitWatchDecisionWithState(&output, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", decision.WakeupID, err)
+		}
+	}
+
+	want := "atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n" +
+		"atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n"
+	if strings.Contains(output.String(), "working_tasks=") {
+		t.Fatalf("wakeup output contains removed working-task count: %q", output.String())
+	}
+	if got := output.String(); got != want {
+		t.Fatalf("wakeup output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchFormatsActionableGoalCount(t *testing.T) {
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(`{"wakeup_id":"wakeup-actionable","actionable_goal_count":3}`), &decision); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	line, ok := formatWatchDecision("wakeup", decision)
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	if strings.Contains(line, "active_goals=") {
+		t.Fatalf("wakeup output uses the old goal label: %q", line)
+	}
+	want := "atct wakeup: actionable_goals=3 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchFormatsWakeupWithNoUnassignedGoals(t *testing.T) {
+	line, ok := formatWatchDecision("wakeup", watchDecision{ActionableGoalCount: 6})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	const want = "atct wakeup: actionable_goals=6 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchFormatsWakeupWithTwoUnassignedGoals(t *testing.T) {
+	line, ok := formatWatchDecision("wakeup", watchDecision{
+		ActionableGoalCount:    6,
+		UnassignedGoalCount:    2,
+		UnassignedGoalIDs:      []int64{136, 140},
+		UnstartedTaskCount:     12,
+		UntouchedTaskCount:     2,
+		WaitingAnswerTaskCount: 0,
+		DelegatedTaskCount:     0,
+		WaitingAnswerCount:     0,
+	})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	const want = "atct wakeup: actionable_goals=6 unassigned_goals=2 unstarted_tasks=12 waiting_answer_tasks=0 untouched_tasks=2 delegated_tasks=0 waiting_answers=0 unassigned=[136,140]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchFormatsExactlyFiveUnassignedGoalsWithoutRemainder(t *testing.T) {
+	line, ok := formatWatchDecision("wakeup", watchDecision{
+		UnassignedGoalCount: 5,
+		UnassignedGoalIDs:   []int64{136, 137, 138, 139, 140},
+	})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	const want = "atct wakeup: actionable_goals=0 unassigned_goals=5 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[136,137,138,139,140]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchFormatsTwentyUnassignedGoalsWithRemainderOnOneLine(t *testing.T) {
+	ids := make([]int64, 20)
+	for i := range ids {
+		ids[i] = 136 + int64(i)
+	}
+
+	line, ok := formatWatchDecision("wakeup", watchDecision{
+		UnassignedGoalCount: 20,
+		UnassignedGoalIDs:   ids,
+	})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	if strings.Contains(line, "\n") {
+		t.Fatalf("wakeup output contains a newline: %q", line)
+	}
+	const want = "atct wakeup: actionable_goals=0 unassigned_goals=20 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[136,137,138,139,140,+15]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchDecodesUnassignedGoalFields(t *testing.T) {
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(`{"wakeup_id":"wakeup-unassigned","unassigned_goal_count":2,"unassigned_goal_ids":[136,140]}`), &decision); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if decision.UnassignedGoalCount != 2 {
+		t.Fatalf("unassigned goal count = %d, want 2", decision.UnassignedGoalCount)
+	}
+	if len(decision.UnassignedGoalIDs) != 2 || decision.UnassignedGoalIDs[0] != 136 || decision.UnassignedGoalIDs[1] != 140 {
+		t.Fatalf("unassigned goal IDs = %#v, want [136 140]", decision.UnassignedGoalIDs)
+	}
+}
+
+func TestWatchDecodesNumericEntityIDs(t *testing.T) {
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(`{"id":11,"decision_id":12,"project_id":13,"wakeup_id":14,"goal_id":16,"task_id":17,"handoff_id":18}`), &decision); err != nil {
+		t.Fatalf("json.Unmarshal decision: %v", err)
+	}
+
+	for name, values := range map[string]struct {
+		got  string
+		want string
+	}{
+		"id":          {decision.ID, "11"},
+		"decision_id": {decision.DecisionID, "12"},
+		"project_id":  {decision.ProjectID, "13"},
+		"wakeup_id":   {decision.WakeupID, "14"},
+		"goal_id":     {decision.GoalID, "16"},
+		"task_id":     {decision.TaskID, "17"},
+		"handoff_id":  {decision.HandoffID, "18"},
+	} {
+		got, want := values.got, values.want
+		if got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	var project watchProject
+	if err := json.Unmarshal([]byte(`{"id":19,"root_path":"/repo"}`), &project); err != nil {
+		t.Fatalf("json.Unmarshal project: %v", err)
+	}
+	if project.ID != "19" {
+		t.Fatalf("project ID = %q, want %q", project.ID, "19")
+	}
+}
+
+func TestWatchEmitsWakeupTaskBreakdownSeparatelyFromDecisionCount(t *testing.T) {
+	var output strings.Builder
+	delivered := make(map[watchDeliveryKey]struct{})
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(`{"wakeup_id":"wakeup-breakdown","actionable_goal_count":3,"unstarted_task_count":3,"waiting_answer_task_count":1,"untouched_task_count":2,"waiting_answer_count":2}`), &decision); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if err := emitWatchDecisionWithState(&output, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+		t.Fatalf("emitWatchDecision: %v", err)
+	}
+
+	want := "atct wakeup: actionable_goals=3 unassigned_goals=0 unstarted_tasks=3 waiting_answer_tasks=1 untouched_tasks=2 delegated_tasks=0 waiting_answers=2 unassigned=[]\n"
+	if got := output.String(); got != want {
+		t.Fatalf("wakeup output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchFormatsDelegatedTaskCountOutsideUnstartedBreakdown(t *testing.T) {
+	line, ok := formatWatchDecision("wakeup", watchDecision{
+		WakeupID:               "wakeup-delegated",
+		UnstartedTaskCount:     3,
+		WaitingAnswerTaskCount: 1,
+		UntouchedTaskCount:     2,
+		WaitingAnswerCount:     4,
+		DelegatedTaskCount:     2,
+	})
+	if !ok {
+		t.Fatal("formatWatchDecision returned false, want true")
+	}
+	const want = "atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=3 waiting_answer_tasks=1 untouched_tasks=2 delegated_tasks=2 waiting_answers=4 unassigned=[]"
+	if line != want {
+		t.Fatalf("wakeup output = %q, want %q", line, want)
+	}
+}
+
+func TestWatchEmitsWakeupAgainAfterStateReturns(t *testing.T) {
+	var output strings.Builder
+	delivered := make(map[watchDeliveryKey]struct{})
+	lastWakeupContent := ""
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, decision := range []watchDecision{
+		{WakeupID: "wakeup-before"},
+		{WakeupID: "wakeup-during", UnstartedTaskCount: 1},
+		{WakeupID: "wakeup-after"},
+	} {
+		if err := emitWatchDecisionWithState(&output, "wakeup", decision, delivered, &lastWakeupContent, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", decision.WakeupID, err)
+		}
+	}
+
+	want := "atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n" +
+		"atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=1 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n" +
+		"atct wakeup: actionable_goals=0 unassigned_goals=0 unstarted_tasks=0 waiting_answer_tasks=0 untouched_tasks=0 delegated_tasks=0 waiting_answers=0 unassigned=[]\n"
+	if got := output.String(); got != want {
+		t.Fatalf("wakeup output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchLivenessPromptsOnlyEligibleScopedMonitor(t *testing.T) {
+	cases := []struct {
+		name  string
+		scope watchScope
+		want  bool
+	}{
+		{name: "commander", scope: watchScope{Role: "commander", ProjectID: "1", GoalID: "249"}},
+		{name: "unscoped", scope: watchScope{Role: "executor", ProjectID: "1"}},
+		{name: "subcommander", scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: true},
+		{name: "subcommander with task", scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249", TaskID: "812"}},
+		{name: "executor", scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: true},
+		{name: "executor without goal", scope: watchScope{Role: "executor", ProjectID: "1", TaskID: "812"}},
+		{name: "unknown role", scope: watchScope{Role: "worker", ProjectID: "1", GoalID: "249", TaskID: "812"}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := watchLivenessEligible(tt.scope)
+			if got != tt.want {
+				t.Fatalf("watchLivenessEligible() = %v, want %v for scope %#v", got, tt.want, tt.scope)
+			}
+		})
+	}
+}
+
+func TestWatchLivenessPromptsOnlyForImmediateRoleAction(t *testing.T) {
+	at := func(value string) *string { return &value }
+	executorScope := watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}
+	subcommanderScope := watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}
+	commanderScope := watchScope{Role: "commander", ProjectID: "1"}
+
+	cases := []struct {
+		name           string
+		scope          watchScope
+		reconciliation watchReconciliation
+		want           bool
+	}{
+		{
+			name:  "executor has implementation work",
+			scope: executorScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, ReceivedAt: at("received"),
+			}}},
+			want: true,
+		},
+		{
+			name:  "executor awaits reviewer",
+			scope: executorScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, ReceivedAt: at("received"), ReviewRequestedAt: at("review"),
+			}}},
+		},
+		{
+			name:  "subcommander has task review",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, ReviewRequestedAt: at("review"),
+			}}},
+			want: true,
+		},
+		{
+			name:  "subcommander has unreceived task handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, TaskID: 812, RequestedAt: at("requested"),
+			}}},
+			want: true,
+		},
+		{
+			name:  "executor ignores unreceived task-create handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskCreateHandoffs: []watchTaskCreateHandoff{{
+				ID: "c", GoalID: 249, RequestedAt: at("requested"),
+			}}},
+		},
+		{
+			name:  "executor has received task-create handoff",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{TaskCreateHandoffs: []watchTaskCreateHandoff{{
+				ID: "c", GoalID: 249, RequestedAt: at("requested"), ReceivedAt: at("received"),
+			}}},
+			want: true,
+		},
+		{
+			name:  "subcommander awaits executor",
+			scope: subcommanderScope,
+			reconciliation: watchReconciliation{
+				GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}},
+				TaskHandoffs: []watchReconciliationHandoff{{GoalID: 249, TaskID: 812, ReceivedAt: at("received")}},
+			},
+		},
+		{
+			name:  "commander has goal review",
+			scope: commanderScope,
+			reconciliation: watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{
+				GoalID: 249, ReviewRequestedAt: at("review"),
+			}}},
+			want: true,
+		},
+		{
+			name:  "open human decision suppresses executor prompt",
+			scope: executorScope,
+			reconciliation: watchReconciliation{
+				Decisions:    []watchDecision{{GoalID: "249", TaskID: "812", Status: "open"}},
+				TaskHandoffs: []watchReconciliationHandoff{{GoalID: 249, TaskID: 812, ReceivedAt: at("received")}},
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			state := newWatchLivenessState(time.Unix(0, 0))
+			if _, got := state.PromptDue(time.Unix(60, 0), tt.scope, tt.reconciliation); got != tt.want {
+				t.Fatalf("PromptDue() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWatchLivenessSuppressesOpenHumanDecision(t *testing.T) {
+	at := func(value string) *string { return &value }
+	state := newWatchLivenessState(time.Unix(0, 0))
+	blocked := watchReconciliation{
+		Decisions:    []watchDecision{{GoalID: "249", Status: "open"}},
+		GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}},
+	}
+	scope := watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}
+	if _, got := state.PromptDue(time.Unix(600, 0), scope, blocked); got {
+		t.Fatal("open human decision prompted, want suppression")
+	}
+	if _, got := state.PromptDue(time.Unix(660, 0), scope, watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{GoalID: 249, ReceivedAt: at("received")}}}); !got {
+		t.Fatal("prompt did not resume after open human decision was cleared")
+	}
+}
+
+func TestWatchLivenessRendersExactSelector(t *testing.T) {
+	at := func(value string) *string { return &value }
+	for _, tt := range []struct {
+		scope watchScope
+		state watchReconciliation
+		want  string
+	}{
+		{scope: watchScope{Role: "commander", ProjectID: "1"}, state: watchReconciliation{GoalHandoffs: []watchReconciliationHandoff{{ID: "gh-9", GoalID: 306, ReviewRequestedAt: at("q")}}}, want: "atct monitor liveness: goal handoff gh-9 is waiting for your review (goal 306)"},
+		{scope: watchScope{Role: "commander", ProjectID: "1"}, state: watchReconciliation{PlanHandoffs: []watchReconciliationHandoff{{ID: "ph-2", GoalID: 5, ReviewRequestedAt: at("q")}}}, want: "atct monitor liveness: plan handoff ph-2 is waiting for your review (goal 5)"},
+		{scope: watchScope{Role: "subcommander", ProjectID: "1", GoalID: "249"}, want: "atct monitor liveness: recheck goal 249"},
+		{scope: watchScope{Role: "executor", ProjectID: "1", GoalID: "249", TaskID: "812"}, want: "atct monitor liveness: recheck task 812"},
+	} {
+		if got := formatWatchLiveness(tt.scope, tt.state); got != tt.want {
+			t.Fatalf("formatWatchLiveness(%#v) = %q, want %q", tt.scope, got, tt.want)
+		}
+	}
+}
+
+func TestWatchDoesNotFormatKeepaliveAsVisibleLine(t *testing.T) {
+	line, ok := formatWatchDecision("keepalive", watchDecision{})
+	if ok || line != "" {
+		t.Fatalf("keepalive format = (%q, %v), want (empty, false)", line, ok)
+	}
+}
+
+func TestWatchFormatsAndDeduplicatesHandoffEntryAdded(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	detectionDelivered := make(map[watchDetectionDeliveryKey]struct{})
+	entry := watchDecision{
+		GoalID:          "goal-1",
+		TaskID:          "task-1",
+		HandoffID:       "handoff-1",
+		ID:              "42",
+		Kind:            "review_requested",
+		AuthorSessionID: 42,
+		BodyPreview:     "implemented the HTTP endpoint",
+	}
+	for range 2 {
+		if err := emitWatchDecisionWithState(&output, "handoff_entry_added", entry, delivered, nil, wakeupDiscrepancyDelivered, detectionDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+	want := "atct handoff entry added: task task-1 (handoff handoff-1, id 42, kind review_requested, author 42)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("handoff entry output = %q, want %q", got, want)
+	}
+}
+
+func TestReadWatchSSEFramesPreservesLastEventID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frames, done := readWatchSSEFrames(ctx, strings.NewReader("id: 42\nevent: handoff_entry_added\ndata: {\"id\":42}\n\n"))
+	frame, ok := <-frames
+	if !ok {
+		t.Fatal("readWatchSSEFrames closed before returning a frame")
+	}
+	if frame.id != "42" {
+		t.Fatalf("SSE frame id = %q, want 42", frame.id)
+	}
+	if frame.name != "handoff_entry_added" {
+		t.Fatalf("SSE frame name = %q, want handoff_entry_added", frame.name)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("readWatchSSEFrames done error = %v", err)
+	}
+}
+
+func TestWatchDecodesCanonicalHandoffEntryIDAndReply(t *testing.T) {
+	var decision watchDecision
+	if err := json.Unmarshal([]byte(`{"id":42,"handoff_id":"handoff-1","kind":"review_received","in_reply_to_id":7}`), &decision); err != nil {
+		t.Fatalf("decode canonical handoff entry event: %v", err)
+	}
+	entryID, err := decision.handoffEntryID()
+	if err != nil {
+		t.Fatalf("handoffEntryID: %v", err)
+	}
+	if entryID != 42 || decision.InReplyToID == nil || *decision.InReplyToID != 7 {
+		t.Fatalf("handoff entry decision = %+v, want id 42 replying to 7", decision)
+	}
+}
+
+func TestConsumeWatchEventsSkipsLifecycleCopyEntriesOnly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	frame := func(id int, kind, body string) string {
+		return fmt.Sprintf("event: handoff_entry_added\ndata: {\"goal_id\":1,\"task_id\":46,\"handoff_id\":\"h1\",\"id\":%d,\"kind\":%q,\"author_session_id\":7,\"body_preview\":%q}\n\n", id, kind, body)
+	}
+	body := frame(1, "request", "brief") + frame(2, "review_received", "received") + frame(3, "review_requested", "ready") + frame(3, "review_requested", "ready")
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	var output bytes.Buffer
+	err := consumeWatchEventsWithStateAndScopeAndSinkAndLastEventID(
+		ctx, client, "http://watch.test", watchScope{GoalID: "1", TaskID: "46"}, &output, time.Second,
+		make(map[watchDeliveryKey]struct{}), new(string), make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), newWatchTaskScopeFilter("46"), nil, new(string),
+	)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("consumeWatchEvents error = %v, want io.EOF", err)
+	}
+	want := "atct handoff entry added: task 46 (handoff h1, id 3, kind review_requested, author 7)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
+func TestConsumeWatchEventsSendsLastEventID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var gotLastEventID string
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		gotLastEventID = req.Header.Get("Last-Event-ID")
+		body := "id: e2\nevent: handoff_entry_added\ndata: {\"goal_id\":1,\"task_id\":46,\"handoff_id\":\"h1\",\"id\":2,\"kind\":\"review_received\",\"author_session_id\":7,\"body_preview\":\"next\"}\n\n"
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	var output bytes.Buffer
+	lastEventID := "e1"
+	err := consumeWatchEventsWithStateAndScopeAndSinkAndLastEventID(
+		ctx, client, "http://watch.test", watchScope{GoalID: "1", TaskID: "46"}, &output, time.Second,
+		make(map[watchDeliveryKey]struct{}), new(string), make(map[watchWakeupDeliveryKey]struct{}), make(map[watchDetectionDeliveryKey]struct{}), newWatchTaskScopeFilter("46"), nil, &lastEventID,
+	)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("consumeWatchEvents error = %v, want io.EOF", err)
+	}
+	if gotLastEventID != "e1" {
+		t.Fatalf("Last-Event-ID = %q, want e1", gotLastEventID)
+	}
+	if !strings.Contains(output.String(), "atct handoff entry added") {
+		t.Fatalf("watch output = %q, want handoff entry line", output.String())
+	}
+	if lastEventID != "e2" {
+		t.Fatalf("last event state = %q, want e2", lastEventID)
+	}
+}
+
+func TestWatchKeepsQuietWhileKeepalivesArriveAndReportsAfterTheyStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const timeout = 40 * time.Millisecond
+	missing := formatWatchKeepaliveMissing(timeout)
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{missing}
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	// Only /api/events is the keepalive stream; the reconcile that runs right
+	// after connecting gets a minimal empty response.
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		body := io.Reader(reader)
+		if req.URL.Path != "/api/events" {
+			body = strings.NewReader(`{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(body),
+		}, nil
+	})}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}))
+	}()
+
+	for i := 0; i < 5; i++ {
+		time.Sleep(10 * time.Millisecond)
+		if _, err := io.WriteString(writer, "event: keepalive\ndata: {}\n\n"); err != nil {
+			t.Fatalf("write keepalive %d: %v", i, err)
+		}
+		if got := output.String(); got != "" {
+			t.Fatalf("watch output while keepalive %d was arriving = %q, want empty", i, got)
+		}
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("consumeWatchEventsWithTimeout() error after keepalives stopped = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for keepalive-missing notification")
+	}
+	if got := output.String(); got != missing+"\n" {
+		t.Fatalf("watch output after keepalives stopped = %q, want one missing line %q", got, missing+"\n")
+	}
+}
+
+func TestWatchReportsOneKeepaliveMissingLine(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const timeout = 10 * time.Millisecond
+	missing := formatWatchKeepaliveMissing(timeout)
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{missing}
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	// Only /api/events is the keepalive stream; the reconcile that runs right
+	// after connecting gets a minimal empty response.
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		body := io.Reader(reader)
+		if req.URL.Path != "/api/events" {
+			body = strings.NewReader(`{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(body),
+		}, nil
+	})}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- consumeWatchEventsWithTimeout(ctx, client, "http://watch.test", "", &output, timeout, make(map[watchDeliveryKey]struct{}), make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}))
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("consumeWatchEventsWithTimeout() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for keepalive-missing notification")
+	}
+	if got := output.String(); got != missing+"\n" {
+		t.Fatalf("watch output = %q, want one missing line %q", got, missing+"\n")
+	}
+}
+
+type watchRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f watchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestWatchLoopTaskScopePreservesCanonicalProjectAcrossCWD(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var got []string
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Query().Get("task_id") != "46" || req.URL.Query().Get("project_id") != "7" || req.URL.Query().Get("goal_id") != "16" {
+			t.Fatalf("watch request = %s, want task-scoped URL", req.URL.String())
+		}
+		if req.URL.Path == "/api/events/reconcile" {
+			body := `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[{"ID":"h1","GoalID":16,"TaskID":46,"RequestedAt":"2026-09-05T00:00:00Z"},{"ID":"h2","GoalID":16,"TaskID":46,"ReceivedAt":"2026-09-05T00:00:00Z"},{"ID":"h3","GoalID":16,"TaskID":46,"ReviewRequestedAt":"2026-09-05T00:00:00Z"}]}`
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+		}
+		body := strings.Join([]string{
+			"event: keepalive\ndata: {}\n\n",
+			"event: wakeup.evaluate_failed\ndata: ignored\n\n",
+		}, "")
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	snapshot := func(context.Context) (string, []watchDecision, error) { return "http://daemon", nil, nil }
+	err := watchLoopWithEnsureAndProjectIDAndScopeAndSink(ctx, io.Discard, client, time.Millisecond, snapshot, nil, func() string { return "8" }, watchScope{ProjectID: "7", GoalID: "16", TaskID: "46"}, func(line string) error {
+		got = append(got, line)
+		if len(got) == 2 {
+			cancel()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("watchLoopWithEnsureAndProjectIDAndScopeAndSink: %v", err)
+	}
+	want := []string{
+		"atct task handoff requested (task_id: 46, handoff_id: h1)",
+		"atct task handoff review requested (task_id: 46, handoff_id: h3)",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("task watch actions = %#v, want %#v", got, want)
+	}
+}
+
+func TestBoundClaudeWatchRegistersAndCleansUpMonitorToken(t *testing.T) {
+	dir := t.TempDir()
+	requestStarted := make(chan struct{})
+	var once sync.Once
+	client := &http.Client{Transport: watchRoundTripper(func(*http.Request) (*http.Response, error) {
+		once.Do(func() { close(requestStarted) })
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+	})}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runBoundClaudeWatch(ctx, dir, t.TempDir(), client, []string{"http://daemon"}, "token-1", false)
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("bound watch did not poll its binding")
+	}
+	registrations, err := daemonctl.ListWatches(dir)
+	if err != nil {
+		t.Fatalf("ListWatches: %v", err)
+	}
+	if len(registrations) != 1 || registrations[0].Scope.MonitorToken != "token-1" {
+		t.Fatalf("bound watch registrations = %#v, want token-1", registrations)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runBoundClaudeWatch: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("bound watch did not stop with its context")
+	}
+	registrations, err = daemonctl.ListWatches(dir)
+	if err != nil {
+		t.Fatalf("ListWatches after cleanup: %v", err)
+	}
+	if len(registrations) != 0 {
+		t.Fatalf("bound watch registrations after cleanup = %#v, want none", registrations)
+	}
+}
+
+func runWatchWithProjects(t *testing.T, cwd string, projects []watchProject) (url.Values, int) {
+	return runWatchWithProjectsAndGoal(t, cwd, projects, "")
+}
+
+func runWatchWithProjectsAndGoal(t *testing.T, cwd string, projects []watchProject, goalID string) (url.Values, int) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: project-query)"}
+	queries := make(chan url.Values, 1)
+	var mu sync.Mutex
+	projectCalls := 0
+	reconcileCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			mu.Lock()
+			projectCalls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(projects); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[]}`)
+		case "/api/events/reconcile":
+			mu.Lock()
+			reconcileCalls++
+			call := reconcileCalls
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if call == 1 {
+				_, _ = io.WriteString(w, `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"decisions":[{"id":"project-query","goal_id":"goal-1","status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			queries <- r.URL.Query()
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: decision.answered\ndata: wake-up-only\n\n")
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProjectAndGoal(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, cwd, goalID); err != nil {
+		t.Fatalf("watchWithURLsAndProjectAndGoal() error = %v", err)
+	}
+	query := <-queries
+	mu.Lock()
+	defer mu.Unlock()
+	return query, projectCalls
+}
+
+func TestWatchPassesGoalIDToEvents(t *testing.T) {
+	cwd := t.TempDir()
+	query, _ := runWatchWithProjectsAndGoal(t, cwd, []watchProject{{ID: "project-1", RootPath: cwd}}, "goal-1")
+	if got := query.Get("goal_id"); got != "goal-1" {
+		t.Fatalf("events goal_id = %q, want %q", got, "goal-1")
+	}
+}
+
+func TestWatchOmitsGoalIDWhenNotSet(t *testing.T) {
+	cwd := t.TempDir()
+	query, _ := runWatchWithProjectsAndGoal(t, cwd, []watchProject{{ID: "project-1", RootPath: cwd}}, "")
+	if _, ok := query["goal_id"]; ok {
+		t.Fatalf("events unexpectedly received goal_id = %q", query.Get("goal_id"))
+	}
+}
+
+func TestParseWatchGoal(t *testing.T) {
+	config, err := parseArgs([]string{"watch", "--goal", "goal-1"})
+	if err != nil {
+		t.Fatalf("parseArgs(watch --goal): %v", err)
+	}
+	if config.watchGoalID != "goal-1" {
+		t.Fatalf("watch goal_id = %q, want %q", config.watchGoalID, "goal-1")
+	}
+
+	config, err = parseArgs([]string{"watch"})
+	if err != nil {
+		t.Fatalf("parseArgs(watch): %v", err)
+	}
+	if config.watchGoalID != "" {
+		t.Fatalf("watch goal_id = %q, want empty", config.watchGoalID)
+	}
+}
+
+func TestWatchPassesMatchingProjectIDToEvents(t *testing.T) {
+	cwd := t.TempDir()
+	query, projectCalls := runWatchWithProjects(t, cwd, []watchProject{{ID: "project-1", RootPath: cwd}})
+	if got := query.Get("project_id"); got != "project-1" {
+		t.Fatalf("events project_id = %q, want %q", got, "project-1")
+	}
+	if got := query.Get("cwd"); got != "" {
+		t.Fatalf("events unexpectedly received cwd = %q", got)
+	}
+	if projectCalls != 1 {
+		t.Fatalf("GET /api/projects calls = %d, want 1", projectCalls)
+	}
+}
+
+func TestWatchMatchesProjectFromSubdirectory(t *testing.T) {
+	root := t.TempDir()
+	cwd := filepath.Join(root, "nested", "work")
+	query, _ := runWatchWithProjects(t, cwd, []watchProject{{ID: "project-1", RootPath: root}})
+	if got := query.Get("project_id"); got != "project-1" {
+		t.Fatalf("events project_id = %q, want %q", got, "project-1")
+	}
+}
+
+func TestWatchOmitsProjectIDWhenCWDDoesNotMatch(t *testing.T) {
+	cwd := t.TempDir()
+	query, _ := runWatchWithProjects(t, cwd, []watchProject{{ID: "other", RootPath: t.TempDir()}})
+	if _, ok := query["project_id"]; ok {
+		t.Fatalf("events unexpectedly received project_id = %q", query.Get("project_id"))
+	}
+}
+
+func TestWatchDoesNotDeliverProjectEventsUntilProjectLookupRecovers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"decision_id: recovered-reconcile"}
+
+	root := t.TempDir()
+	var mu sync.Mutex
+	inboxCalls := 0
+	projectCalls := 0
+	eventCalls := 0
+	reconcileCalls := 0
+	queries := make(chan url.Values, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/inbox":
+			mu.Lock()
+			inboxCalls++
+			call := inboxCalls
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if call == 1 {
+				_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"leaked-inbox","project_id":"other-project","default_applied_at":null}]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"recovered-inbox","project_id":"project-1","default_applied_at":null}]}`)
+		case "/api/projects":
+			mu.Lock()
+			projectCalls++
+			call := projectCalls
+			mu.Unlock()
+			if call == 1 {
+				http.Error(w, "temporary project lookup failure", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/events/reconcile":
+			mu.Lock()
+			reconcileCalls++
+			call := reconcileCalls
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if call == 1 {
+				_, _ = io.WriteString(w, `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"decisions":[{"id":"recovered-reconcile","project_id":"project-1","status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			mu.Lock()
+			eventCalls++
+			projectsFetched := projectCalls
+			mu.Unlock()
+			queries <- r.URL.Query()
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if projectsFetched < 2 {
+				_, _ = io.WriteString(w, "event: decision.answered\ndata: {\"id\":\"leaked-sse\",\"project_id\":\"other-project\",\"default_applied_at\":null}\n\n")
+			} else {
+				_, _ = io.WriteString(w, "event: decision.answered\ndata: {\"id\":\"recovered-sse\",\"project_id\":\"project-1\",\"default_applied_at\":null}\n\n")
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProject(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root); err != nil {
+		t.Fatalf("watchWithURLsAndProject() error = %v", err)
+	}
+
+	query := <-queries
+	got := output.String()
+	if strings.Contains(got, "leaked-inbox") {
+		t.Fatalf("watch output = %q, want no failed-lookup inbox delivery", got)
+	}
+	if strings.Contains(got, "leaked-sse") {
+		t.Fatalf("watch output = %q, want no failed-lookup SSE delivery", got)
+	}
+	if strings.Contains(got, "recovered-inbox") || strings.Contains(got, "recovered-sse") {
+		t.Fatalf("watch output = %q, want no direct inbox/SSE delivery", got)
+	}
+	if !strings.Contains(got, "recovered-reconcile") {
+		t.Fatalf("watch output = %q, want canonical retry delivery", got)
+	}
+	if got := query.Get("project_id"); got != "project-1" {
+		t.Fatalf("events project_id = %q, want %q", got, "project-1")
+	}
+
+	mu.Lock()
+	gotInboxCalls, gotProjectCalls, gotEventCalls := inboxCalls, projectCalls, eventCalls
+	mu.Unlock()
+	if gotInboxCalls != 2 || gotProjectCalls != 2 || gotEventCalls != 1 || reconcileCalls != 2 {
+		t.Fatalf("requests = inbox %d, projects %d, events %d, reconcile %d; want 2, 2, 1, 2", gotInboxCalls, gotProjectCalls, gotEventCalls, reconcileCalls)
+	}
+}
+
+func TestWatchReadsSnapshotAfterDisconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"decision_id: stranded"}
+
+	var mu sync.Mutex
+	inboxCalls := 0
+	eventCalls := 0
+	reconcileCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/inbox":
+			mu.Lock()
+			inboxCalls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[]}`)
+		case "/api/events/reconcile":
+			mu.Lock()
+			reconcileCalls++
+			call := reconcileCalls
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			// Calls 1 and 2 are the initial reconcile and the one right after the
+			// SSE connect. The stranded decision shows up only from call 3, i.e.
+			// the reconcile after the disconnect, so the test proves the snapshot
+			// is read again after the stream drops.
+			if call <= 2 {
+				_, _ = io.WriteString(w, `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"decisions":[{"id":"stranded","status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			mu.Lock()
+			eventCalls++
+			call := eventCalls
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if call == 1 {
+				return
+			}
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	err := watchWithURLs(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond)
+	if err != nil {
+		t.Fatalf("watchWithURLs() error = %v", err)
+	}
+
+	got := output.String()
+	if !strings.Contains(got, "atct decision answered (decision_id: stranded)\n") {
+		t.Fatalf("watch output = %q, want stranded snapshot notification", got)
+	}
+	mu.Lock()
+	gotInboxCalls, gotEventCalls := inboxCalls, eventCalls
+	mu.Unlock()
+	if gotInboxCalls < 2 || gotEventCalls < 1 || reconcileCalls < 3 {
+		t.Fatalf("requests after disconnect = inbox %d, events %d, reconcile %d, want inbox >=2, events >=1, reconcile >=3", gotInboxCalls, gotEventCalls, reconcileCalls)
+	}
+}
+
+func TestWatchReconcilesAtStartAndReconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopCancel := time.AfterFunc(100*time.Millisecond, cancel)
+	defer stopCancel.Stop()
+
+	var mu sync.Mutex
+	inboxCalls := 0
+	reconcileCalls := 0
+	eventCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/inbox":
+			mu.Lock()
+			inboxCalls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[]}`)
+		case "/api/events/reconcile":
+			mu.Lock()
+			reconcileCalls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"goals":[],"tasks":[],"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			mu.Lock()
+			eventCalls++
+			call := eventCalls
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/event-stream")
+			if call > 1 {
+				<-r.Context().Done()
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLs(ctx, []string{server.URL}, io.Discard, server.Client(), time.Millisecond); err != nil {
+		t.Fatalf("watchWithURLs() error = %v", err)
+	}
+	mu.Lock()
+	gotInboxCalls, gotReconcileCalls, gotEventCalls := inboxCalls, reconcileCalls, eventCalls
+	mu.Unlock()
+	if gotInboxCalls < 2 || gotEventCalls < 2 {
+		t.Fatalf("requests after disconnect = inbox %d, events %d; want both at least 2", gotInboxCalls, gotEventCalls)
+	}
+	if gotReconcileCalls < 2 {
+		t.Fatalf("reconciliation calls = %d, want start and reconnect reconciliation", gotReconcileCalls)
+	}
+}
+
+func TestWatchFiltersOtherProjectFromSnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: unscoped)"}
+
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"other","project_id":"other-project","default_applied_at":null},{"id":"assigned","project_id":"project-1","default_applied_at":null},{"id":"unscoped","project_id":"","default_applied_at":null}]}`)
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"decisions":[{"id":"other","project_id":"other-project","status":"answered"},{"id":"assigned","project_id":"project-1","status":"answered"},{"id":"unscoped","project_id":"","status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProject(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root); err != nil {
+		t.Fatalf("watchWithURLsAndProject() error = %v", err)
+	}
+
+	want := "atct decision answered (decision_id: assigned)\n" +
+		"atct decision answered (decision_id: unscoped)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchFiltersOtherGoalFromSnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: same-goal)"}
+
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"other-goal","project_id":"project-1","goal_id":91,"default_applied_at":null},{"id":"same-goal","project_id":"project-1","goal_id":92,"default_applied_at":null},{"id":"no-goal","project_id":"project-1","default_applied_at":null}]}`)
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"decisions":[{"id":"other-goal","project_id":"project-1","goal_id":91,"status":"answered"},{"id":"same-goal","project_id":"project-1","goal_id":92,"status":"answered"},{"id":"no-goal","project_id":"project-1","status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProjectAndGoal(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root, "92"); err != nil {
+		t.Fatalf("watchWithURLsAndProjectAndGoal() error = %v", err)
+	}
+
+	want := "atct decision answered (decision_id: same-goal)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchKeepsEveryGoalInSnapshotWithoutGoalFlag(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: no-goal)"}
+
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]watchProject{{ID: "project-1", RootPath: root}}); err != nil {
+				t.Errorf("encode projects: %v", err)
+			}
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[{"id":"other-goal","project_id":"project-1","goal_id":91,"default_applied_at":null},{"id":"same-goal","project_id":"project-1","goal_id":92,"default_applied_at":null},{"id":"no-goal","project_id":"project-1","default_applied_at":null}]}`)
+		case "/api/events/reconcile":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"decisions":[{"id":"other-goal","project_id":"project-1","goal_id":91,"status":"answered"},{"id":"same-goal","project_id":"project-1","goal_id":92,"status":"answered"},{"id":"no-goal","project_id":"project-1","status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := watchWithURLsAndProjectAndGoal(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond, root, ""); err != nil {
+		t.Fatalf("watchWithURLsAndProjectAndGoal() error = %v", err)
+	}
+
+	want := "atct decision answered (decision_id: other-goal)\n" +
+		"atct decision answered (decision_id: same-goal)\n" +
+		"atct decision answered (decision_id: no-goal)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchReconcilesAnsweredStateAfterSignal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"atct decision answered (decision_id: same)"}
+
+	eventCalls := 0
+	reconcileCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/inbox":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[]}`)
+		case "/api/events/reconcile":
+			reconcileCalls++
+			w.Header().Set("Content-Type", "application/json")
+			if reconcileCalls == 1 {
+				_, _ = io.WriteString(w, `{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"decisions":[{"id":"same","status":"answered"}],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: decision.approved\ndata: {\"id\":\"payload-only\"}\n\n")
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			eventCalls++
+			if eventCalls >= 2 {
+				cancel()
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	err := watchWithURLs(ctx, []string{server.URL}, &output, server.Client(), time.Millisecond)
+	if err != nil {
+		t.Fatalf("watchWithURLs() error = %v", err)
+	}
+
+	want := "atct decision answered (decision_id: same)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("watch output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchReportsReconnectWhileUnavailable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output cancelOnOutput
+	output.cancel = cancel
+	output.needles = []string{"reconnecting"}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/inbox" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"unapplied_decisions":[]}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	err := watchWithURLs(ctx, []string{server.URL}, &output, server.Client(), 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("watchWithURLs() error = %v", err)
+	}
+
+	if got := output.String(); !strings.Contains(got, "atct watch: connection unavailable; reconnecting in 10ms\n") {
+		t.Fatalf("watch output = %q, want reconnect notification", got)
+	}
+}
+
+func TestWatchRecoveryReportsOnceThenHealthy(t *testing.T) {
+	state := newWatchRecoveryState()
+	var got []string
+	report := func(name string) { got = append(got, name) }
+	state.Failure(report)
+	state.Failure(report)
+	for i := 0; i < watchEnsureMaxFailures; i++ {
+		state.EnsureFailure(report)
+	}
+	state.Reconciled(report)
+	state.Reconciled(report)
+
+	want := []string{"recovering", "degraded", "healthy"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("recovery transitions = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalWatchReportsHealthyReconciliationAndIgnoresHealthDiagnostics(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var output bytes.Buffer
+	var healthBodies []map[string]any
+	var mu sync.Mutex
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/events/reconcile":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`)),
+			}, nil
+		case "/api/events":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader("")),
+			}, nil
+		case "/api/monitor-health":
+			var body map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				return nil, err
+			}
+			mu.Lock()
+			healthBodies = append(healthBodies, body)
+			if len(healthBodies) == 3 {
+				cancel()
+			}
+			mu.Unlock()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("{}")),
+			}, nil
+		default:
+			return nil, fmt.Errorf("unexpected watch request: %s", req.URL.String())
+		}
+	})}
+	snapshot := func(context.Context) (string, []watchDecision, error) {
+		return "http://daemon", nil, nil
+	}
+	scope := normalWatchScope("7", "249")
+	reporter := newWatchHealthReporter(client, []string{"http://daemon"}, t.TempDir(), scope)
+	if reporter == nil {
+		t.Fatal("newWatchHealthReporter returned nil for eligible normal watch scope")
+	}
+	err := watchLoopWithEnsureAndProjectIDAndScopeAndSinkAndCursor(ctx, &output, client, time.Millisecond, snapshot, nil, func() string {
+		return scope.ProjectID
+	}, scope, nil, "", reporter)
+	if err != nil {
+		t.Fatalf("normal watch loop error = %v", err)
+	}
+
+	mu.Lock()
+	bodies := append([]map[string]any(nil), healthBodies...)
+	mu.Unlock()
+	var healthy []map[string]any
+	for _, body := range bodies {
+		if body["state"] == "healthy" {
+			healthy = append(healthy, body)
+		}
+	}
+	if len(healthy) < 2 {
+		t.Fatalf("healthy health POST count = %d (all bodies: %#v), want at least 2 reconciliation updates", len(healthy), bodies)
+	}
+	if healthy[0]["monitor_id"] != healthy[1]["monitor_id"] {
+		t.Fatalf("monitor IDs changed across updates: %v, %v", healthy[0]["monitor_id"], healthy[1]["monitor_id"])
+	}
+	if healthy[0]["last_seen_at"] == healthy[1]["last_seen_at"] {
+		t.Fatalf("last_seen_at did not update: %v", healthy[0]["last_seen_at"])
+	}
+	if healthy[0]["scope_key"] != nil {
+		t.Fatalf("reported scope_key = %v, want normal watch scope without lifecycle identity", healthy[0]["scope_key"])
+	}
+	// A watch without a monitor token is a human's diagnostic view, not any
+	// session's Monitor, so it must not claim a session: doing so would make
+	// that session look alive for as long as somebody kept the view open.
+	if healthy[0]["agent_session_id"] != nil {
+		t.Fatalf("reported agent_session_id = %v, want a plain watch to name no session", healthy[0]["agent_session_id"])
+	}
+	if healthy[0]["agent_key"] != nil {
+		t.Fatalf("reported agent_key = %v, want no expected-scope agent key", healthy[0]["agent_key"])
+	}
+	if !strings.Contains(output.String(), "atct watch: connection unavailable; reconnecting in 1ms") {
+		t.Fatalf("watch diagnostics = %q, want recoverable reconnect diagnostic", output.String())
+	}
+}
+
+type cancelOnOutput struct {
+	mu      sync.Mutex
+	buf     strings.Builder
+	cancel  context.CancelFunc
+	needles []string
+}
+
+func (w *cancelOnOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	_, _ = w.buf.Write(p)
+	got := w.buf.String()
+	shouldCancel := false
+	for _, needle := range w.needles {
+		if strings.Contains(got, needle) {
+			shouldCancel = true
+			break
+		}
+	}
+	cancel := w.cancel
+	w.mu.Unlock()
+	if shouldCancel {
+		cancel()
+	}
+	return len(p), nil
+}
+
+func (w *cancelOnOutput) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return fmt.Sprint(w.buf.String())
+}
+
+func TestEmitWatchEvaluateFailureDeduplicatesByWakeupID(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, payload := range []string{
+		`{"wakeup_id":"failure-1","reason":"database unavailable"}`,
+		`{"wakeup_id":"failure-1","reason":"database unavailable"}`,
+		`{"wakeup_id":"failure-2","reason":"timeout"}`,
+	} {
+		var decision watchDecision
+		if err := json.Unmarshal([]byte(payload), &decision); err != nil {
+			t.Fatalf("json.Unmarshal: %v", err)
+		}
+		if err := emitWatchDecisionWithState(&output, "wakeup.evaluate_failed", decision, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+
+	want := "atct wakeup evaluate failed: database unavailable\n" +
+		"atct wakeup evaluate failed: timeout\n"
+	if got := output.String(); got != want {
+		t.Fatalf("evaluate failure output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchWakeupWritesOneLinePerCondition(t *testing.T) {
+	cases := []struct {
+		event  string
+		record watchDecision
+		want   string
+	}{
+		{"wakeup.completion_report_missing", watchDecision{GoalID: "goal-1"}, "atct wakeup: goal goal-1 has all tasks done; request named goal review with atct_goal_handoff_review_request"},
+		{"wakeup.commits_missing", watchDecision{GoalID: "goal-2"}, "atct wakeup: goal goal-2 has no linked commits"},
+		{"wakeup.undeclared_goal", watchDecision{GoalID: "goal-3"}, "atct wakeup: goal goal-3 has no tasks (tasks are optional; nothing to declare)"},
+		{"wakeup.all_tasks_dropped", watchDecision{GoalID: "goal-4"}, "atct wakeup: goal goal-4 has all tasks dropped"},
+		{"wakeup.unclaimed_doing", watchDecision{TaskID: "task-1"}, "atct wakeup: task task-1 is doing without a work lock"},
+		{"wakeup.handoff_unreceived", watchDecision{HandoffID: "handoff-1"}, "atct wakeup: handoff handoff-1 has no receipt"},
+		{"wakeup.handoff_unreported", watchDecision{HandoffID: "handoff-2", WorktreeActivity: "changed"}, "atct wakeup: handoff handoff-2 has no completion report, but the goal's worktree changed after receipt"},
+		{"wakeup.handoff_unreported", watchDecision{HandoffID: "handoff-3", WorktreeActivity: "unchanged"}, "atct wakeup: handoff handoff-3 has no completion report and the goal's worktree is unchanged since receipt"},
+		{"wakeup.handoff_unreported", watchDecision{HandoffID: "handoff-4"}, "atct wakeup: handoff handoff-4 has no completion report"},
+		{"handoff_reported", watchDecision{HandoffID: "handoff-3", TaskID: "task-3", CompleteReport: "task report"}, "atct handoff reported: task task-3 (handoff handoff-3): task report"},
+		{"handoff_reported", watchDecision{HandoffID: "handoff-4", GoalID: "goal-4", CompleteReport: "goal report"}, "atct handoff reported: goal goal-4 (handoff handoff-4): goal report"},
+		{"wakeup.claim_undelegated", watchDecision{TaskID: "task-2"}, "atct wakeup: task task-2 has no handoff request"},
+		{"wakeup.decision_answered_unapplied", watchDecision{DecisionID: "decision-1", GoalID: "goal-1"}, "atct wakeup: decision decision-1 was answered but not applied"},
+		{"wakeup.decision_default_unapplied", watchDecision{DecisionID: "decision-2", GoalID: "goal-1"}, "atct wakeup: decision decision-2 was default-applied but not applied"},
+		{"wakeup.claim_stale", watchDecision{TaskID: "task-3"}, "atct wakeup: task task-3 has a stale claim"},
+	}
+	for _, tc := range cases {
+		var output bytes.Buffer
+		delivered := make(map[watchDeliveryKey]struct{})
+		wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+		wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+		if err := emitWatchDecisionWithState(&output, tc.event, tc.record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", tc.event, err)
+		}
+		if got := strings.TrimSpace(output.String()); got != tc.want {
+			t.Fatalf("%s wrote %q, want %q", tc.event, got, tc.want)
+		}
+	}
+}
+
+func TestEmitWatchWakeupDoesNotRepeatSameTarget(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	// A fresh wakeup_id on the second delivery must not make it look new;
+	// the key is the target, not the occurrence.
+	first := watchDecision{GoalID: "goal-1", WakeupID: "wakeup-1"}
+	second := watchDecision{GoalID: "goal-1", WakeupID: "wakeup-2"}
+	for _, record := range []watchDecision{first, second} {
+		if err := emitWatchDecisionWithState(&output, "wakeup.commits_missing", record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+	if lines := strings.Count(strings.TrimSpace(output.String()), "\n"); lines != 0 {
+		t.Fatalf("output = %q, want a single line", output.String())
+	}
+}
+
+func TestEmitWatchWakeupDoesNotRepeatSameDecision(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, record := range []watchDecision{
+		{ID: "event-1", DecisionID: "decision-1", GoalID: "goal-1"},
+		{ID: "event-2", DecisionID: "decision-1", GoalID: "goal-2"},
+	} {
+		if err := emitWatchDecisionWithState(&output, "wakeup.decision_answered_unapplied", record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+
+	want := "atct wakeup: decision decision-1 was answered but not applied\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchWakeupDoesNotRepeatSameHandoff(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, record := range []watchDecision{
+		{HandoffID: "handoff-1", WakeupID: "wakeup-1"},
+		{HandoffID: "handoff-1", WakeupID: "wakeup-2"},
+	} {
+		if err := emitWatchDecisionWithState(&output, "wakeup.handoff_unreceived", record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+	want := "atct wakeup: handoff handoff-1 has no receipt\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchHandoffReportedDoesNotRepeatSameHandoff(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, record := range []watchDecision{
+		{HandoffID: "handoff-1", TaskID: "task-1", CompleteReport: "first report", WakeupID: "wakeup-1"},
+		{HandoffID: "handoff-1", TaskID: "task-1", CompleteReport: "first report", WakeupID: "wakeup-2"},
+	} {
+		if err := emitWatchDecisionWithState(&output, "handoff_reported", record, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+	want := "atct handoff reported: task task-1 (handoff handoff-1): first report\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchHandoffReportedTruncatesLongReport(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+	report := strings.Repeat("x", 81)
+
+	if err := emitWatchDecisionWithState(&output, "handoff_reported", watchDecision{
+		HandoffID:      "handoff-long",
+		GoalID:         "goal-long",
+		CompleteReport: report,
+	}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+		t.Fatalf("emitWatchDecision: %v", err)
+	}
+	want := "atct handoff reported: goal goal-long (handoff handoff-long): " + strings.Repeat("x", 80) + "…\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchHandoffReportedRejectsMissingTarget(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	err := emitWatchDecisionWithState(&output, "handoff_reported", watchDecision{CompleteReport: "report"}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered)
+	if err == nil {
+		t.Fatal("emitWatchDecision() with no task or goal target = nil, want an error")
+	}
+	if output.Len() != 0 {
+		t.Fatalf("output = %q, want nothing", output.String())
+	}
+}
+
+func TestEmitWatchWakeupSeparatesTargets(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	// Deduplication must not be so broad that a second goal with the same
+	// condition goes unreported.
+	for _, goalID := range []string{"goal-1", "goal-2"} {
+		if err := emitWatchDecisionWithState(&output, "wakeup.commits_missing", watchDecision{GoalID: goalID}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", goalID, err)
+		}
+	}
+	for _, goalID := range []string{"goal-1", "goal-2"} {
+		if !strings.Contains(output.String(), goalID) {
+			t.Fatalf("output = %q, want it to mention %s", output.String(), goalID)
+		}
+	}
+}
+
+func TestEmitWatchGoalCreatedWritesOneLine(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	if err := emitWatchDecisionWithState(&output, "goal.created", watchDecision{GoalID: "goal-1"}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+		t.Fatalf("emitWatchDecision: %v", err)
+	}
+
+	want := "atct goal created (goal_id: goal-1)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchGoalCreatedDoesNotRepeatSameGoal(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, decision := range []watchDecision{
+		{ID: "event-1", GoalID: "goal-1"},
+		{ID: "event-2", GoalID: "goal-1"},
+	} {
+		if err := emitWatchDecisionWithState(&output, "goal.created", decision, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision: %v", err)
+		}
+	}
+
+	want := "atct goal created (goal_id: goal-1)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchGoalCreatedSeparatesGoals(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	for _, goalID := range []string{"goal-1", "goal-2"} {
+		if err := emitWatchDecisionWithState(&output, "goal.created", watchDecision{GoalID: goalID}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+			t.Fatalf("emitWatchDecision(%s): %v", goalID, err)
+		}
+	}
+
+	want := "atct goal created (goal_id: goal-1)\n" +
+		"atct goal created (goal_id: goal-2)\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitWatchWakeupIgnoresUnknownEvent(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	// A newer daemon may publish wakeups this build has never heard of.
+	// Staying quiet is correct; failing is not.
+	if err := emitWatchDecisionWithState(&output, "wakeup.something_new", watchDecision{GoalID: "goal-1"}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered); err != nil {
+		t.Fatalf("emitWatchDecision(unknown): %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("output = %q, want nothing", output.String())
+	}
+}
+
+func TestEmitWatchWakeupRejectsMissingTarget(t *testing.T) {
+	var output bytes.Buffer
+	delivered := make(map[watchDeliveryKey]struct{})
+	wakeupDiscrepancyDelivered := make(map[watchWakeupDiscrepancyDeliveryKey]struct{})
+	wakeupDelivered := make(map[watchWakeupDeliveryKey]struct{})
+
+	err := emitWatchDecisionWithState(&output, "wakeup.commits_missing", watchDecision{}, delivered, nil, wakeupDiscrepancyDelivered, wakeupDelivered)
+	if err == nil {
+		t.Fatal("emitWatchDecision() with no target = nil, want an error")
+	}
+	if output.Len() != 0 {
+		t.Fatalf("output = %q, want nothing", output.String())
+	}
+}
+
+func TestParseArgsWatchMonitorRequiresBindingToken(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantToken string
+		wantError bool
+	}{
+		{name: "binding token", args: []string{"watch", "--monitor", "--token", "token-1"}, wantToken: "token-1"},
+		{name: "once after monitor", args: []string{"watch", "--monitor", "--token", "t", "--once"}, wantToken: "t"},
+		{name: "once alone", args: []string{"watch", "--once"}, wantError: true},
+		{name: "monitor without token", args: []string{"watch", "--monitor"}, wantError: true},
+		{name: "goal selector", args: []string{"watch", "--monitor", "-goal", "249"}, wantError: true},
+		{name: "project selector", args: []string{"watch", "--monitor", "-project"}, wantError: true},
+		{name: "token and selector", args: []string{"watch", "--monitor", "--token", "token-1", "-goal", "249"}, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseArgs(tt.args)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("parseArgs(%q) error = %v, wantError %v", tt.args, err, tt.wantError)
+			}
+			if tt.wantError {
+				return
+			}
+			if !cfg.watchMonitor || cfg.watchMonitorToken != tt.wantToken || cfg.watchProjectScope || cfg.watchGoalID != "" {
+				t.Fatalf("watch config = %#v, want token-bound unscoped monitor", cfg)
+			}
+		})
+	}
+}
+
+func TestClaudeMonitorActionWriterExcludesRawDiagnostics(t *testing.T) {
+	var monitor bytes.Buffer
+	var diagnostics []string
+	writer := monitorActionWriter{writer: &monitor}
+	rawSink := watchRawLineSink(func(line string) error {
+		diagnostics = append(diagnostics, line)
+		return nil
+	})
+	decision := watchDecision{DecisionID: "1"}
+	if err := writeWatchLineWithActionSink(io.Discard, "atct decision approved (decision_id: 1)", "decision.approved", decision, rawSink, writer.Sink); err != nil {
+		t.Fatalf("write selected action: %v", err)
+	}
+	if err := writeWatchLineWithActionSink(io.Discard, "atct watch: connection unavailable; reconnecting in 5s", "", watchDecision{}, rawSink, writer.Sink); err != nil {
+		t.Fatalf("write diagnostic: %v", err)
+	}
+	if got, want := monitor.String(), "atct decision approved (decision_id: 1)\n"; got != want {
+		t.Fatalf("monitor output = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(diagnostics, "\n"), "atct decision approved (decision_id: 1)\natct watch: connection unavailable; reconnecting in 5s"; got != want {
+		t.Fatalf("diagnostics = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeMonitorActionWriterSkipsReviewReceipt(t *testing.T) {
+	var monitor bytes.Buffer
+	writer := monitorActionWriter{writer: &monitor}
+	if err := writer.Sink(watchAgentAction{line: "review request"}); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	if err := writer.Sink(watchAgentAction{line: "review receipt", controlOnly: true}); err != nil {
+		t.Fatalf("write receipt: %v", err)
+	}
+	if got, want := monitor.String(), "review request\n"; got != want {
+		t.Fatalf("monitor output = %q, want %q", got, want)
+	}
+}
+
+func reconcileGoalCreatedOutput(t *testing.T, body string) string {
+	t.Helper()
+	client := &http.Client{Transport: watchRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+	var output bytes.Buffer
+	lastWakeupContent := ""
+	state := watchReconciliation{initialized: strings.Contains(body, `"initialized"`)}
+	if state.initialized {
+		state.Goals = []watchReconciliationGoal{{ID: "1"}}
+	}
+	if err := reconcileWatchScope(
+		context.Background(), client, "http://daemon", watchScope{Role: "commander", ProjectID: "1", MonitorToken: "token-1"}, &output,
+		make(map[watchDeliveryKey]struct{}), &lastWakeupContent,
+		make(map[watchWakeupDiscrepancyDeliveryKey]struct{}), make(map[watchWakeupDeliveryKey]struct{}), newWatchScopeFilter(""), nil, &state,
+	); err != nil {
+		t.Fatalf("reconcileWatchScope: %v", err)
+	}
+	return output.String()
+}
+
+func TestReconcileWatchScopeSkipsGoalCreatedByAgent(t *testing.T) {
+	goals := `[{"id":1,"status":"active","created_at":"2026-09-18T00:00:00Z"},` +
+		`{"id":7,"status":"active","creator":"agent","created_at":"2026-09-19T00:01:00Z"},` +
+		`{"id":8,"status":"active","creator":"human","created_at":"2026-09-19T00:02:00Z"},` +
+		`{"id":9,"status":"active","created_at":"2026-09-19T00:03:00Z"}]`
+	rest := `"decisions":[],"goal_handoffs":[],"plan_handoffs":[],"task_handoffs":[]}`
+	want := "atct goal created (goal_id: 8)\natct goal created (goal_id: 9)\n"
+
+	// initialized path: goal 1 is already known.
+	if got := reconcileGoalCreatedOutput(t, `{"initialized":true,"goals":`+goals+`,`+rest); got != want {
+		t.Fatalf("initialized output = %q, want %q", got, want)
+	}
+	// watermark path.
+	if got := reconcileGoalCreatedOutput(t, `{"monitor_last_reconciled_at":"2026-09-19T00:00:00Z","goals":`+goals+`,`+rest); got != want {
+		t.Fatalf("watermark output = %q, want %q", got, want)
+	}
+}
+
+func TestWatchTaskCreateHandoffEventIgnoresUnreceived(t *testing.T) {
+	at := func(value string) *string { return &value }
+	if event, _, ok := watchTaskCreateHandoffEvent(watchTaskCreateHandoff{ID: "c", GoalID: 7, RequestedAt: at("requested")}); ok {
+		t.Fatalf("unreceived task-create handoff projected %q, want nothing", event)
+	}
+	event, decision, ok := watchTaskCreateHandoffEvent(watchTaskCreateHandoff{ID: "c", GoalID: 7, RequestedAt: at("requested"), ReceivedAt: at("received")})
+	if !ok || event != "task.create_handoff.receive" || decision.HandoffID != "c" {
+		t.Fatalf("received task-create handoff = (%q, %#v, %v), want task.create_handoff.receive", event, decision, ok)
+	}
+}

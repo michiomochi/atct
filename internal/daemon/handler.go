@@ -1,0 +1,2488 @@
+package daemon
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/michiomochi/atct-archive/internal/domain"
+	"github.com/michiomochi/atct-archive/internal/rpc"
+	"github.com/michiomochi/atct-archive/internal/store"
+)
+
+var ErrGoalAlreadyClaimed = errors.New("goal already claimed")
+var ErrProjectAlreadyClaimed = errors.New("project already claimed")
+var ErrDecisionOutsideGoal = errors.New("decision belongs to another goal")
+var ErrRoleUnauthorized = errors.New("role is not authorized for this operation")
+var ErrSessionNotIdentified = errors.New("agent session is not identified")
+
+const identifyHint = "this MCP transport session was never identified (a reconnect, a daemon restart, or a second transport of the same client opens a new one): call atct_session_identify with the session_key and monitor_token from SessionStart, then retry"
+
+var ErrHandoffCompletionSessionRequired = errors.New("agent_session_id is required; identify the session and use the named handoff review flow")
+
+const retiredGoalCompletionDiagnostic = "goal.complete is retired; use atct_goal_review_request followed by atct_goal_review_complete"
+
+type responseWithUnappliedDecisions struct {
+	Data               any                             `json:"data"`
+	UnappliedDecisions []unappliedDecisionNotification `json:"unapplied_decisions,omitempty"`
+	ClaimableTasks     []claimableTaskSummary          `json:"claimable_tasks,omitempty"`
+}
+
+type claimEvidence struct {
+	Scope          string `json:"scope"`
+	AgentSessionID int64  `json:"agent_session_id"`
+	ProjectID      int64  `json:"project_id,omitempty"`
+	GoalID         int64  `json:"goal_id,omitempty"`
+	TaskID         int64  `json:"task_id,omitempty"`
+	HandoffID      string `json:"handoff_id,omitempty"`
+}
+
+type responseWithRoleEvidence struct {
+	Data          any           `json:"data"`
+	Role          string        `json:"role"`
+	ClaimEvidence claimEvidence `json:"claim_evidence"`
+}
+
+// roleAssignment carries the internal role ("commander", "subcommander",
+// "executor"). The user-visible names are produced only by roleResponseFor and
+// visibleRole; authorization keeps reading the internal Role.
+type roleAssignment struct {
+	Role      string
+	ProjectID int64
+	GoalID    int64
+	HasTasks  bool
+}
+
+type commanderRole struct {
+	Role      string   `json:"role"`
+	ProjectID int64    `json:"project_id"`
+	Does      []string `json:"does"`
+	DoesNot   []string `json:"does_not"`
+	UILocale  string   `json:"ui_locale"`
+}
+
+type goalExecutorRole struct {
+	Role     string   `json:"role"`
+	GoalID   int64    `json:"goal_id"`
+	Does     []string `json:"does"`
+	DoesNot  []string `json:"does_not"`
+	UILocale string   `json:"ui_locale"`
+}
+
+type executorRole struct {
+	Role     string   `json:"role"`
+	Does     []string `json:"does"`
+	DoesNot  []string `json:"does_not"`
+	UILocale string   `json:"ui_locale"`
+}
+
+type roleBoundary struct {
+	Does    []string
+	DoesNot []string
+}
+
+// roleBoundaries is keyed by the user-visible role name.
+var roleBoundaries = map[string]roleBoundary{
+	"commander": {Does: []string{"triage incoming work", "split goals", "prepare a working area", "review landed changes", "publish", "resolve conflicts", "clean up"}, DoesNot: []string{"design the goal", "implement the goal", "edit executor deliverables"}},
+	"executor":  {Does: []string{"design the goal", "implement and test the goal's work", "use sub-agents as it sees fit", "report completion for the goal", "ask the commander to file decisions for the human", "commit the goal's work"}, DoesNot: []string{"inspect or manage other goals", "publish", "claim the project", "file decisions to the human directly"}},
+}
+
+// visibleRole maps an internal assignment to the name users see. An internal
+// "executor" that holds no received task is "none": it must not pass an
+// expected_role=executor check, which now means "holds a goal handoff".
+func visibleRole(internalRole string, hasTasks bool) string {
+	switch internalRole {
+	case "commander":
+		return "commander"
+	case "subcommander":
+		return "executor"
+	default:
+		if hasTasks {
+			return "task_worker"
+		}
+		return "none"
+	}
+}
+
+type claimableTaskSummary struct {
+	ID     int64  `json:"id"`
+	Title  string `json:"title"`
+	GoalID int64  `json:"goal_id"`
+}
+
+func taskHandoffClaimedBy(handoff *store.TaskHandoff) int64 {
+	if handoff == nil {
+		return 0
+	}
+	if handoff.ReceivedBy != 0 {
+		return handoff.ReceivedBy
+	}
+	return handoff.RequestedBy
+}
+
+func taskHandoffClaimedAt(handoff *store.TaskHandoff) *time.Time {
+	if handoff == nil {
+		return nil
+	}
+	if handoff.ReceivedAt != nil {
+		return handoff.ReceivedAt
+	}
+	return handoff.RequestedAt
+}
+
+func goalHandoffClaimedBy(handoff *store.GoalHandoff) int64 {
+	if handoff == nil {
+		return 0
+	}
+	if handoff.ReceivedBy != 0 {
+		return handoff.ReceivedBy
+	}
+	return handoff.RequestedBy
+}
+
+type goalListTaskCounts struct {
+	Todo    int `json:"todo"`
+	Doing   int `json:"doing"`
+	Done    int `json:"done"`
+	Dropped int `json:"dropped"`
+}
+
+func summaryLine(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		runes := []rune(line)
+		if len(runes) > 120 {
+			return string(runes[:120]) + "…"
+		}
+		return line
+	}
+	return ""
+}
+
+type unappliedDecisionNotification struct {
+	DecisionID int64  `json:"decision_id"`
+	Question   string `json:"question"`
+}
+
+type goalReviewProjection struct {
+	DecisionID          int64                 `json:"decision_id"`
+	Status              domain.DecisionStatus `json:"status"`
+	AnswerLabel         string                `json:"answer_label,omitempty"`
+	AnswerText          string                `json:"answer_text,omitempty"`
+	AnsweredAt          *time.Time            `json:"answered_at,omitempty"`
+	AppliedAt           *time.Time            `json:"applied_at,omitempty"`
+	NextCommanderAction string                `json:"next_commander_action,omitempty"`
+}
+
+func unappliedDecisionNotifications(decisions []domain.Decision) []unappliedDecisionNotification {
+	return unappliedDecisionNotificationsExcept(decisions)
+}
+
+func unappliedDecisionNotificationsExcept(decisions []domain.Decision, excludedIDs ...int64) []unappliedDecisionNotification {
+	if len(decisions) == 0 {
+		return nil
+	}
+	excluded := make(map[int64]struct{}, len(excludedIDs))
+	for _, id := range excludedIDs {
+		excluded[id] = struct{}{}
+	}
+	notices := make([]unappliedDecisionNotification, 0, len(decisions))
+	for _, decision := range decisions {
+		if _, ok := excluded[decision.ID]; ok {
+			continue
+		}
+		notices = append(notices, unappliedDecisionNotification{
+			DecisionID: decision.ID,
+			Question:   decision.Question,
+		})
+	}
+	return notices
+}
+
+func (d *Daemon) deriveSessionRole(ctx context.Context, agentSessionID int64) (roleAssignment, error) {
+	assignment, err := d.store.MonitorAssignment(ctx, agentSessionID)
+	if err != nil {
+		return roleAssignment{}, err
+	}
+	return roleAssignment{Role: assignment.Role, ProjectID: assignment.ProjectID, GoalID: assignment.GoalID, HasTasks: len(assignment.Tasks) > 0}, nil
+}
+
+func roleResponseFor(assignment roleAssignment, uiLocale string) any {
+	visible := visibleRole(assignment.Role, assignment.HasTasks)
+	boundary := roleBoundaries[visible]
+	does, doesNot := boundary.Does, boundary.DoesNot
+	if does == nil {
+		does = []string{}
+	}
+	if doesNot == nil {
+		doesNot = []string{}
+	}
+	switch visible {
+	case "commander":
+		return commanderRole{
+			Role:      visible,
+			ProjectID: assignment.ProjectID,
+			Does:      does,
+			DoesNot:   doesNot,
+			UILocale:  uiLocale,
+		}
+	case "executor":
+		return goalExecutorRole{
+			Role:     visible,
+			GoalID:   assignment.GoalID,
+			Does:     does,
+			DoesNot:  doesNot,
+			UILocale: uiLocale,
+		}
+	default:
+		return executorRole{
+			Role:     visible,
+			Does:     does,
+			DoesNot:  doesNot,
+			UILocale: uiLocale,
+		}
+	}
+}
+
+type decisionScopeNotice struct {
+	Scope  string `json:"scope"`
+	GoalID int64  `json:"goal_id,omitempty"`
+	Role   string `json:"role"`
+	Note   string `json:"note,omitempty"`
+}
+
+func (d *Daemon) unappliedDecisionsForSession(ctx context.Context, goalID int64, agentSessionID int64) ([]domain.Decision, error) {
+	if goalID == 0 {
+		return nil, nil
+	}
+	goal, err := d.store.GetGoal(ctx, goalID)
+	if err != nil {
+		return nil, err
+	}
+	role, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case role.Role == "commander":
+		return d.store.ListUnappliedDecisionsForProject(ctx, goal.ProjectID)
+	case role.Role == "subcommander" && role.GoalID != 0:
+		return d.store.ListUnappliedDecisionsForGoal(ctx, role.GoalID)
+	default:
+		return d.store.ListUnappliedDecisionsForGoal(ctx, goalID)
+	}
+}
+
+func (d *Daemon) unappliedDecisionsForRecovery(ctx context.Context, projectID int64, agentSessionID int64) ([]domain.Decision, decisionScopeNotice, error) {
+	role, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil {
+		return nil, decisionScopeNotice{}, err
+	}
+	switch {
+	case role.Role == "commander":
+		decisions, err := d.store.ListUnappliedDecisionsForProject(ctx, projectID)
+		return decisions, decisionScopeNotice{Scope: "project", Role: "commander"}, err
+	case role.Role == "subcommander" && role.GoalID != 0:
+		decisions, err := d.store.ListUnappliedDecisionsForGoal(ctx, role.GoalID)
+		return decisions, decisionScopeNotice{Scope: "goal", GoalID: role.GoalID, Role: "executor"}, err
+	default:
+		decisions, err := d.store.ListUnappliedDecisionsForProject(ctx, projectID)
+		return decisions, decisionScopeNotice{
+			Scope: "project",
+			Role:  visibleRole(role.Role, role.HasTasks),
+			Note:  "role could not be derived for this session; these answers span the whole project. call atct_session_identify to re-establish the role, then apply only your own goal's answers",
+		}, err
+	}
+}
+
+func (d *Daemon) responseWithScopedUnappliedDecisions(ctx context.Context, data any, goalID int64, agentSessionID int64, excludedIDs ...int64) (responseWithUnappliedDecisions, error) {
+	unapplied, err := d.unappliedDecisionsForSession(ctx, goalID, agentSessionID)
+	if err != nil {
+		return responseWithUnappliedDecisions{}, err
+	}
+	return responseWithUnappliedDecisions{
+		Data:               data,
+		UnappliedDecisions: unappliedDecisionNotificationsExcept(unapplied, excludedIDs...),
+	}, nil
+}
+
+// appendCommanderRoutedDecisions polls the project's answered decisions that are
+// addressed to the commander by kind (e.g. a sessionless goal_review) when the caller is a commander.
+func (d *Daemon) appendCommanderRoutedDecisions(ctx context.Context, agentSessionID int64, decs []domain.Decision) ([]domain.Decision, error) {
+	role, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil || role.Role != "commander" {
+		return decs, err
+	}
+	unapplied, err := d.store.ListUnappliedDecisionsForProject(ctx, role.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, decision := range unapplied {
+		if !store.DecisionRoutesToCommander(decision) || decision.AgentSessionID == agentSessionID {
+			continue
+		}
+		polled, err := d.store.PollDecisions(ctx, agentSessionID, decision.ID)
+		if err != nil {
+			return nil, err
+		}
+		decs = append(decs, polled...)
+	}
+	return decs, nil
+}
+
+func (d *Daemon) listClaimableTasks(ctx context.Context, projectID, excludedTaskID int64) ([]claimableTaskSummary, error) {
+	goals, err := d.store.ListGoals(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	claimable := make([]claimableTaskSummary, 0, 3)
+	for _, goal := range goals {
+		tasks, err := d.store.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return nil, err
+		}
+		handoffs, err := d.store.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, task := range tasks {
+			if task.ID == excludedTaskID || task.Status != domain.TaskTodo || handoffs[task.ID] != nil {
+				continue
+			}
+			claimable = append(claimable, claimableTaskSummary{
+				ID: task.ID, Title: task.Title, GoalID: task.GoalID,
+			})
+			if len(claimable) == 3 {
+				return claimable, nil
+			}
+		}
+	}
+	return claimable, nil
+}
+
+func tasksCreatedWithIdempotencyKey(tasks []domain.Task, idempotencyKey string) []domain.Task {
+	var declared []domain.Task
+	for _, task := range tasks {
+		separator := strings.LastIndex(task.DeclareKey, "#")
+		if separator < 0 || task.DeclareKey[:separator] != idempotencyKey {
+			continue
+		}
+		declared = append(declared, task)
+	}
+	return declared
+}
+
+func (d *Daemon) ensureAgentSessionProject(ctx context.Context, agentSessionID int64, targetProjectID int64) error {
+	if agentSessionID == 0 {
+		return nil
+	}
+	assignedProjectID, err := d.store.ProjectIDForAgentSession(ctx, agentSessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrAgentSessionNotAssociated) {
+			return d.store.AssociateAgentSessionWithProject(ctx, agentSessionID, targetProjectID)
+		}
+		return err
+	}
+	if assignedProjectID == targetProjectID {
+		return nil
+	}
+
+	projects, err := d.store.ListProjects(ctx)
+	if err != nil {
+		return err
+	}
+	assignedProjectName := fmt.Sprint(assignedProjectID)
+	targetProjectName := fmt.Sprint(targetProjectID)
+	for _, project := range projects {
+		switch project.ID {
+		case assignedProjectID:
+			assignedProjectName = project.Name
+		case targetProjectID:
+			targetProjectName = project.Name
+		}
+	}
+	return fmt.Errorf("agent session project scope violation: assigned project %q, target project %q", assignedProjectName, targetProjectName)
+}
+
+func (d *Daemon) authorizeGoalHandoffHolder(ctx context.Context, goalID, agentSessionID int64, operation string) error {
+	if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, goalID, 0, agentSessionID, operation); err != nil {
+		return err
+	}
+	handoffs, err := d.store.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("%s authorization: list goal handoffs: %w", operation, err)
+	}
+	for _, handoff := range handoffs {
+		if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.ReceivedBy == agentSessionID {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s denied: caller %d is not the received goal-handoff holder for goal %d", operation, agentSessionID, goalID)
+}
+
+func (d *Daemon) authorizeCommander(ctx context.Context, goalID, projectID, agentSessionID int64, operation string) error {
+	return d.authorizeRole(ctx, []string{"commander"}, projectID, goalID, 0, agentSessionID, operation)
+}
+
+// authorizeRole is the RPC role boundary. Store methods keep their existing
+// handoff and claim checks; this check makes the role allowed by the API
+// explicit before the store is called.
+func (d *Daemon) authorizeRole(ctx context.Context, allowed []string, projectID, goalID, taskID, agentSessionID int64, operation string) error {
+	if agentSessionID == 0 {
+		return fmt.Errorf("%w: %s requires agent_session_id", ErrRoleUnauthorized, operation)
+	}
+	if taskID != 0 && goalID == 0 {
+		var err error
+		goalID, err = d.store.GetTaskGoalID(ctx, taskID)
+		if err != nil {
+			return err
+		}
+	}
+	if goalID != 0 && projectID == 0 {
+		goal, err := d.store.GetGoal(ctx, goalID)
+		if err != nil {
+			return err
+		}
+		projectID = goal.ProjectID
+	}
+	assignment, err := d.deriveSessionRole(ctx, agentSessionID)
+	if err != nil {
+		return err
+	}
+	developmentMode, err := d.store.DevelopmentModeEnabled(ctx, agentSessionID)
+	if err != nil {
+		return err
+	}
+	for _, role := range allowed {
+		if developmentMode && assignment.Role == "commander" && role == "subcommander" && assignment.ProjectID == projectID {
+			return nil
+		}
+		if developmentMode && assignment.Role == "subcommander" && role == "executor" && assignment.GoalID == goalID {
+			return nil
+		}
+		if assignment.Role != role {
+			continue
+		}
+		switch role {
+		case "commander":
+			if assignment.ProjectID == projectID {
+				return nil
+			}
+		case "subcommander":
+			if assignment.GoalID == goalID {
+				return nil
+			}
+		case "executor":
+			if taskID == 0 {
+				continue
+			}
+			handoffs, err := d.store.ListTaskHandoffs(ctx, taskID)
+			if err != nil {
+				return err
+			}
+			for _, handoff := range handoffs {
+				if handoff.ReceivedBy == agentSessionID && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+					return nil
+				}
+			}
+		}
+	}
+	return fmt.Errorf("%w: %s denied for %s on project %d, goal %d, task %d", ErrRoleUnauthorized, operation, visibleRole(assignment.Role, assignment.HasTasks), projectID, goalID, taskID)
+}
+
+func (d *Daemon) resolveOrRegisterProject(ctx context.Context, cwd string) (domain.Project, error) {
+	project, err := d.store.ResolveProject(ctx, cwd)
+	if err == nil {
+		return project, nil
+	}
+	if !errors.Is(err, store.ErrProjectNotFound) {
+		return domain.Project{}, err
+	}
+
+	rootPath := store.NormalizeRoot(ctx, cwd)
+	project, err = d.store.CreateProject(ctx, store.DefaultProjectName(ctx, rootPath), rootPath)
+	if err == nil {
+		return project, nil
+	}
+
+	project, resolveErr := d.store.ResolveProject(ctx, cwd)
+	if resolveErr == nil {
+		return project, nil
+	}
+	if !errors.Is(resolveErr, store.ErrProjectNotFound) {
+		return domain.Project{}, resolveErr
+	}
+
+	return d.store.CreateProject(ctx, parentBaseName(rootPath), rootPath)
+}
+
+// parentBaseName is the "<parent>/<base>" name used when the default name is taken.
+func parentBaseName(rootPath string) string {
+	return filepath.Join(filepath.Base(filepath.Dir(rootPath)), filepath.Base(rootPath))
+}
+
+// isProjectNameConflict reports whether err is the UNIQUE violation on projects.name.
+func isProjectNameConflict(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed: projects.name")
+}
+
+// nameConflictHint tells the caller to pick another name. The original text is
+// kept so cmd/atct can still detect the duplicate by substring.
+func nameConflictHint(err error) error {
+	if isProjectNameConflict(err) {
+		return fmt.Errorf("%w; give a different name", err)
+	}
+	return err
+}
+
+// normalizeEntityIDs keeps the transport compatible with clients that send
+// numeric IDs as strings while the daemon's internal and response types use
+// canonical integer IDs. Other strings are passed to the resolver so removed
+// UUID-style IDs receive migration guidance. Numeric JSON values are validated
+// here as well so a fractional value cannot be silently truncated later.
+func (d *Daemon) normalizeEntityIDs(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+	trimmedParams := strings.TrimSpace(string(params))
+	if trimmedParams == "" || trimmedParams == "null" {
+		return params, nil
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(params, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return params, nil
+	}
+
+	resolvers := map[string]func(context.Context, string) (int64, error){
+		"project_id":           d.store.ResolveProjectID,
+		"goal_id":              d.store.ResolveGoalID,
+		"task_id":              d.store.ResolveTaskID,
+		"decision_id":          d.store.ResolveDecisionID,
+		"derived_from_goal_id": d.store.ResolveGoalID,
+	}
+	for field, resolve := range resolvers {
+		raw, ok := fields[field]
+		if !ok {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(raw))
+		if trimmed == "" || trimmed == "null" {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, `"`) {
+			var value string
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return nil, fmt.Errorf("%s must be an integer or string: %w", field, err)
+			}
+			if strings.TrimSpace(value) == "" && optionalEntityID(method, field) {
+				fields[field] = json.RawMessage("0")
+				continue
+			}
+			id, err := resolve(ctx, value)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s: %w", field, err)
+			}
+			fields[field] = json.RawMessage(strconv.FormatInt(id, 10))
+			continue
+		}
+
+		var id int64
+		if err := json.Unmarshal(raw, &id); err != nil {
+			return nil, fmt.Errorf("%s must be an integer or string: %w", field, err)
+		}
+		fields[field] = json.RawMessage(strconv.FormatInt(id, 10))
+	}
+	for _, field := range []string{"agent_session_id", "requested_by", "received_by", "reviewer_id", "target_session_id"} {
+		raw, ok := fields[field]
+		if !ok {
+			continue
+		}
+		id, err := parseAgentSessionID(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s must be an integer or decimal string: %w", field, err)
+		}
+		fields[field] = json.RawMessage(strconv.FormatInt(id, 10))
+	}
+	return json.Marshal(fields)
+}
+
+func parseAgentSessionID(raw json.RawMessage) (int64, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return 0, nil
+	}
+	if strings.HasPrefix(trimmed, `"`) {
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return 0, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return 0, nil
+		}
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+	var id int64
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func optionalEntityID(method, field string) bool {
+	switch {
+	case method == "decision.ask" && field == "task_id":
+		return true
+	case method == "decision.poll" && field == "decision_id":
+		return true
+	case method == "goal.set_derived_from" && field == "derived_from_goal_id":
+		return true
+	default:
+		return false
+	}
+}
+
+type taskHandoffRequestParams struct {
+	HandoffID     string `json:"handoff_id"`
+	TaskID        int64  `json:"task_id"`
+	RequestedBy   int64  `json:"requested_by"`
+	RequestReport string `json:"request_report"`
+}
+
+type taskHandoffReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	TaskID     int64  `json:"task_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type taskHandoffReviewRequestParams struct {
+	HandoffID           string `json:"handoff_id"`
+	TaskID              int64  `json:"task_id"`
+	RequestedBy         int64  `json:"requested_by"`
+	ReviewRequestReport string `json:"review_request_report"`
+}
+
+type taskHandoffReviewReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	TaskID     int64  `json:"task_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type taskHandoffReviewRejectParams struct {
+	HandoffID    string `json:"handoff_id"`
+	TaskID       int64  `json:"task_id"`
+	ReviewerID   int64  `json:"reviewer_id"`
+	RejectReport string `json:"reject_report"`
+}
+
+type taskHandoffCompleteParams struct {
+	HandoffID      string `json:"handoff_id"`
+	TaskID         int64  `json:"task_id"`
+	AgentSessionID int64  `json:"agent_session_id"`
+	CompleteReport string `json:"complete_report"`
+}
+
+type goalHandoffRequestParams struct {
+	HandoffID     string `json:"handoff_id"`
+	GoalID        int64  `json:"goal_id"`
+	RequestedBy   int64  `json:"requested_by"`
+	RequestReport string `json:"request_report"`
+}
+
+type goalHandoffReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	GoalID     int64  `json:"goal_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type goalHandoffReviewRequestParams struct {
+	HandoffID           string `json:"handoff_id"`
+	GoalID              int64  `json:"goal_id"`
+	RequestedBy         int64  `json:"requested_by"`
+	ReviewRequestReport string `json:"review_request_report"`
+}
+
+type goalHandoffReviewReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	GoalID     int64  `json:"goal_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type goalHandoffReviewRejectParams struct {
+	HandoffID    string `json:"handoff_id"`
+	GoalID       int64  `json:"goal_id"`
+	ReviewerID   int64  `json:"reviewer_id"`
+	RejectReport string `json:"reject_report"`
+}
+
+type goalHandoffCompleteParams struct {
+	HandoffID         string `json:"handoff_id"`
+	GoalID            int64  `json:"goal_id"`
+	AgentSessionID    int64  `json:"agent_session_id"`
+	CompleteReport    string `json:"complete_report"`
+	Capability        string `json:"capability"`
+	CallerCapability  string `json:"caller_capability"`
+	MonitorCapability string `json:"monitor_capability"`
+}
+
+func (p goalHandoffCompleteParams) capabilityFields() capabilityFields {
+	return capabilityFields{
+		Capability: p.Capability, CallerCapability: p.CallerCapability, MonitorCapability: p.MonitorCapability,
+	}
+}
+
+type goalReviewRequestParams struct {
+	GoalID                  int64   `json:"goal_id"`
+	WorkDone                string  `json:"work_done"`
+	NowPossible             string  `json:"now_possible"`
+	HowToVerify             string  `json:"how_to_verify"`
+	Surprises               string  `json:"surprises"`
+	NeedsReview             string  `json:"needs_review"`
+	NextGoalIDs             []int64 `json:"next_goal_ids,omitempty"`
+	AgentSessionID          int64   `json:"agent_session_id"`
+	IncludeUnappliedAnswers bool    `json:"include_unapplied_answers"`
+}
+
+type goalReviewCompleteParams struct {
+	GoalID                  int64 `json:"goal_id"`
+	AgentSessionID          int64 `json:"agent_session_id"`
+	IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
+}
+
+type planHandoffReviewRequestParams struct {
+	HandoffID           string `json:"handoff_id"`
+	GoalID              int64  `json:"goal_id"`
+	RequestedBy         int64  `json:"requested_by"`
+	ReviewRequestReport string `json:"review_request_report"`
+}
+
+type planHandoffReviewReceiveParams struct {
+	HandoffID  string `json:"handoff_id"`
+	GoalID     int64  `json:"goal_id"`
+	ReceivedBy int64  `json:"received_by"`
+}
+
+type planHandoffReviewRejectParams struct {
+	HandoffID    string `json:"handoff_id"`
+	GoalID       int64  `json:"goal_id"`
+	ReviewerID   int64  `json:"reviewer_id"`
+	RejectReport string `json:"reject_report"`
+}
+
+type planHandoffCompleteParams struct {
+	HandoffID      string `json:"handoff_id"`
+	GoalID         int64  `json:"goal_id"`
+	AgentSessionID int64  `json:"agent_session_id"`
+	CompleteReport string `json:"complete_report"`
+}
+
+type handoffRecoverParams struct {
+	HandoffKind    string `json:"handoff_kind"`
+	HandoffID      string `json:"handoff_id"`
+	GoalID         int64  `json:"goal_id"`
+	TaskID         int64  `json:"task_id"`
+	Reason         string `json:"reason"`
+	AgentSessionID int64  `json:"agent_session_id"`
+}
+
+type sessionDiscardRequestParams struct {
+	ProjectID       int64  `json:"project_id"`
+	GoalID          int64  `json:"goal_id"`
+	TargetSessionID int64  `json:"target_session_id"`
+	Reason          string `json:"reason"`
+	AgentSessionID  int64  `json:"agent_session_id"`
+}
+
+type sessionDiscardParams struct {
+	ProjectID       int64 `json:"project_id"`
+	TargetSessionID int64 `json:"target_session_id"`
+	DecisionID      int64 `json:"decision_id"`
+	AgentSessionID  int64 `json:"agent_session_id"`
+}
+
+func (d *Daemon) recoverHandoff(ctx context.Context, p handoffRecoverParams) (any, error) {
+	if p.AgentSessionID <= 0 {
+		return nil, errors.New("handoff recovery requires agent_session_id")
+	}
+	if strings.TrimSpace(p.HandoffKind) == "" || strings.TrimSpace(p.HandoffID) == "" || strings.TrimSpace(p.Reason) == "" {
+		return nil, errors.New("handoff_kind, handoff_id, and reason are required")
+	}
+	if p.GoalID != 0 && p.TaskID != 0 {
+		return nil, errors.New("handoff recovery accepts either goal_id or task_id, not both")
+	}
+	switch p.HandoffKind {
+	case "goal":
+		if p.GoalID <= 0 || p.TaskID != 0 {
+			return nil, errors.New("goal recovery requires goal_id")
+		}
+		return d.store.RecoverGoalHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.Reason)
+	case "plan":
+		if p.GoalID <= 0 || p.TaskID != 0 {
+			return nil, errors.New("plan recovery requires goal_id")
+		}
+		return d.store.RecoverPlanHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.Reason)
+	case "task":
+		if p.TaskID <= 0 || p.GoalID != 0 {
+			return nil, errors.New("task recovery requires task_id")
+		}
+		return d.store.RecoverTaskHandoff(ctx, p.HandoffID, p.TaskID, p.AgentSessionID, p.Reason)
+	case "task_create":
+		if p.GoalID <= 0 || p.TaskID != 0 {
+			return nil, errors.New("task_create recovery requires goal_id")
+		}
+		return d.store.RecoverTaskCreateHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.Reason)
+	default:
+		return nil, fmt.Errorf("unsupported handoff_kind %q", p.HandoffKind)
+	}
+}
+
+func (d *Daemon) receiveRoleEvidence(ctx context.Context, agentSessionID, projectID, goalID, taskID int64, handoffID string) (string, claimEvidence, error) {
+	if taskID != 0 && goalID == 0 {
+		var err error
+		goalID, err = d.store.GetTaskGoalID(ctx, taskID)
+		if err != nil {
+			return "", claimEvidence{}, err
+		}
+	}
+	if goalID != 0 && projectID == 0 {
+		goal, err := d.store.GetGoal(ctx, goalID)
+		if err != nil {
+			return "", claimEvidence{}, err
+		}
+		projectID = goal.ProjectID
+	}
+	assignment, err := d.store.MonitorAssignment(ctx, agentSessionID)
+	if err != nil {
+		return "", claimEvidence{}, err
+	}
+	evidence := claimEvidence{
+		AgentSessionID: agentSessionID,
+		ProjectID:      projectID,
+		GoalID:         goalID,
+		TaskID:         taskID,
+		HandoffID:      handoffID,
+	}
+	switch assignment.Role {
+	case "commander":
+		evidence.Scope = "project"
+		evidence.ProjectID = assignment.ProjectID
+	case "subcommander":
+		evidence.Scope = "goal"
+		evidence.ProjectID = assignment.ProjectID
+		evidence.GoalID = assignment.GoalID
+	case "executor":
+		if taskID != 0 {
+			evidence.Scope = "task"
+		}
+	}
+	return visibleRole(assignment.Role, len(assignment.Tasks) > 0), evidence, nil
+}
+
+func (d *Daemon) requestTaskHandoff(ctx context.Context, p taskHandoffRequestParams) (store.TaskHandoff, error) {
+	if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.RequestedBy, "task handoff request"); err != nil {
+		return store.TaskHandoff{}, err
+	}
+	return d.store.RequestTaskHandoff(ctx, p.HandoffID, p.TaskID, p.RequestedBy, p.RequestReport)
+}
+
+func (d *Daemon) receiveTaskHandoff(ctx context.Context, p taskHandoffReceiveParams) (store.TaskHandoff, error) {
+	if p.HandoffID == "" {
+		return d.store.ReceiveTaskHandoffForTask(ctx, p.TaskID, p.ReceivedBy)
+	}
+	return d.store.ReceiveTaskHandoff(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+}
+
+func (d *Daemon) receiveTaskHandoffResponse(ctx context.Context, p taskHandoffReceiveParams, handoff store.TaskHandoff) (responseWithRoleEvidence, error) {
+	role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, 0, handoff.TaskID, handoff.ID)
+	if err != nil {
+		return responseWithRoleEvidence{}, err
+	}
+	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
+}
+
+func (d *Daemon) completeTaskHandoff(ctx context.Context, p taskHandoffCompleteParams) (store.TaskHandoff, error) {
+	if p.AgentSessionID == 0 {
+		return store.TaskHandoff{}, ErrHandoffCompletionSessionRequired
+	}
+	if p.HandoffID == "" {
+		return store.TaskHandoff{}, fmt.Errorf("task handoff completion by reviewer requires handoff_id")
+	}
+	return d.store.CompleteTaskHandoffByReviewer(ctx, p.HandoffID, p.TaskID, p.AgentSessionID, p.CompleteReport)
+}
+
+func (d *Daemon) requestGoalHandoff(ctx context.Context, p goalHandoffRequestParams) (store.GoalHandoff, error) {
+	if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.RequestedBy, "goal handoff request"); err != nil {
+		return store.GoalHandoff{}, err
+	}
+	return d.store.RequestGoalHandoff(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.RequestReport)
+}
+
+func (d *Daemon) receiveGoalHandoff(ctx context.Context, p goalHandoffReceiveParams) (store.GoalHandoff, error) {
+	if p.HandoffID == "" {
+		return d.store.ReceiveGoalHandoffForGoal(ctx, p.GoalID, p.ReceivedBy)
+	}
+	return d.store.ReceiveGoalHandoff(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+}
+
+func (d *Daemon) receiveGoalHandoffResponse(ctx context.Context, p goalHandoffReceiveParams, handoff store.GoalHandoff) (responseWithRoleEvidence, error) {
+	role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, handoff.GoalID, 0, handoff.ID)
+	if err != nil {
+		return responseWithRoleEvidence{}, err
+	}
+	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
+}
+
+func (d *Daemon) completeGoalHandoff(ctx context.Context, p goalHandoffCompleteParams) (store.GoalHandoff, error) {
+	if p.AgentSessionID == 0 {
+		return store.GoalHandoff{}, ErrHandoffCompletionSessionRequired
+	}
+	if p.HandoffID == "" {
+		return store.GoalHandoff{}, fmt.Errorf("goal handoff completion by reviewer requires handoff_id")
+	}
+	goal, err := d.store.GetGoal(ctx, p.GoalID)
+	if err != nil {
+		return store.GoalHandoff{}, err
+	}
+	if err := d.authorizeCommander(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID, "goal handoff completion"); err != nil {
+		return store.GoalHandoff{}, err
+	}
+	return d.store.CompleteGoalHandoffByReviewer(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.CompleteReport)
+}
+
+func (d *Daemon) receiveGoalReviewResponse(ctx context.Context, p goalHandoffReviewReceiveParams, handoff store.GoalHandoff) (responseWithRoleEvidence, error) {
+	role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, handoff.GoalID, 0, handoff.ID)
+	if err != nil {
+		return responseWithRoleEvidence{}, err
+	}
+	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
+}
+
+func (d *Daemon) receivePlanReviewResponse(ctx context.Context, p planHandoffReviewReceiveParams, handoff store.PlanHandoff) (responseWithRoleEvidence, error) {
+	role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, handoff.GoalID, 0, handoff.ID)
+	if err != nil {
+		return responseWithRoleEvidence{}, err
+	}
+	return responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil
+}
+
+// dispatch answers one RPC and, for a transition the execution flow continues
+// from, names the operation that follows. Carrying it on the response is what
+// keeps an agent from re-reading doc/execution-flow.md to find its next call.
+func (d *Daemon) dispatch(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
+	return d.dispatchWithPeer(ctx, req, 0)
+}
+
+// dispatchWithPeer keeps direct in-process callers compatible while attaching
+// a daemon-assigned identity to requests received over one Unix socket
+// connection. Monitored capabilities are accepted only on that same peer.
+func (d *Daemon) dispatchWithPeer(ctx context.Context, req rpc.Request, peerID uint64) (json.RawMessage, error) {
+	raw, err := d.dispatchMethodWithPeer(ctx, req, peerID)
+	if err != nil {
+		return nil, d.withIdentifyHint(ctx, req, err)
+	}
+	return withNextStep(raw, nextStepAfter[req.Method]), nil
+}
+
+// withIdentifyHint appends the re-identify instruction when the caller is a
+// transport row that never ran session.identify. Without it a refusal such as
+// ErrRoleUnauthorized reads as "you are an executor" and the agent stops,
+// though re-identifying reattaches the row to its canonical session.
+func (d *Daemon) withIdentifyHint(ctx context.Context, req rpc.Request, err error) error {
+	if req.Method == "session.identify" || req.Method == "run.register" || errors.Is(err, ErrSessionNotIdentified) {
+		return err
+	}
+	var p struct {
+		AgentSessionID int64 `json:"agent_session_id"`
+		RequestedBy    int64 `json:"requested_by"`
+		ReceivedBy     int64 `json:"received_by"`
+		ReviewerID     int64 `json:"reviewer_id"`
+	}
+	if json.Unmarshal(req.Params, &p) != nil {
+		return err
+	}
+	id := int64(0)
+	for _, candidate := range []int64{p.AgentSessionID, p.RequestedBy, p.ReceivedBy, p.ReviewerID} {
+		if candidate != 0 {
+			id = candidate
+			break
+		}
+	}
+	if id == 0 {
+		return err
+	}
+	if unidentified, lookupErr := d.store.AgentSessionUnidentified(ctx, id); lookupErr == nil && unidentified {
+		return fmt.Errorf("%w; %s", err, identifyHint)
+	}
+	return err
+}
+
+// withNextStep adds next_step to an object response. A response that is not a
+// JSON object, or already carries the key, is returned untouched.
+func withNextStep(raw json.RawMessage, next []nextStepOption) json.RawMessage {
+	if len(next) == 0 || len(raw) == 0 || raw[0] != '{' {
+		return raw
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return raw
+	}
+	if _, taken := fields["next_step"]; taken {
+		return raw
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return raw
+	}
+	fields["next_step"] = encoded
+	merged, err := json.Marshal(fields)
+	if err != nil {
+		return raw
+	}
+	return merged
+}
+
+func (d *Daemon) dispatchMethod(ctx context.Context, req rpc.Request) (json.RawMessage, error) {
+	return d.dispatchMethodWithPeer(ctx, req, 0)
+}
+
+func (d *Daemon) dispatchMethodWithPeer(ctx context.Context, req rpc.Request, peerID uint64) (json.RawMessage, error) {
+	params, err := d.normalizeEntityIDs(ctx, req.Method, req.Params)
+	if err != nil {
+		return nil, err
+	}
+	req.Params = params
+	if err := d.ensureProjectActiveForMethod(ctx, req.Method, req.Params); err != nil {
+		return nil, err
+	}
+
+	switch req.Method {
+	case "run.register":
+		var p struct {
+			PID       int    `json:"pid"`
+			CWD       string `json:"cwd"`
+			Monitored bool   `json:"monitored"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		projectID := int64(0)
+		if p.CWD != "" {
+			project, err := d.store.ResolveProject(ctx, p.CWD)
+			if err == nil {
+				projectID = project.ID
+			} else if !errors.Is(err, store.ErrProjectNotFound) {
+				return nil, err
+			}
+		}
+		agentSessionID, err := d.store.RegisterAgentSessionInProject(ctx, p.PID, projectID)
+		if err != nil {
+			return nil, err
+		}
+		response := map[string]any{"ok": true, "agent_session_id": agentSessionID}
+		if p.Monitored {
+			capability, err := d.issueMonitoredCallerCapability(agentSessionID, peerID)
+			if err != nil {
+				return nil, err
+			}
+			response["capability"] = capability.Capability
+			response["expires_at"] = capability.ExpiresAt
+		}
+		return marshal(response, nil)
+
+	case "monitor.capability.issue", "session.capability.issue":
+		var p struct {
+			AgentSessionID int64 `json:"agent_session_id"`
+			Monitored      bool  `json:"monitored"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if !p.Monitored {
+			return nil, ErrMonitoredCallerRequired
+		}
+		capability, err := d.issueMonitoredCallerCapability(p.AgentSessionID, peerID)
+		return marshal(capability, err)
+
+	case "session.identify":
+		var p struct {
+			AgentSessionID int64  `json:"agent_session_id"`
+			SessionKey     string `json:"session_key"`
+			MonitorToken   string `json:"monitor_token"`
+			CWD            string `json:"cwd"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		canonicalID, reattached, err := d.store.IdentifyAgentSession(ctx, p.AgentSessionID, p.SessionKey)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.MonitorToken) != "" {
+			if err := d.store.BindMonitorToken(ctx, p.MonitorToken, canonicalID); err != nil {
+				return nil, err
+			}
+		}
+		// Identify is the one call every session makes before anything else,
+		// so it is where the project belongs. Waiting for whichever later
+		// operation happens to pass through ensureAgentSessionProject left a
+		// session that never got that far with no project at all.
+		//
+		// A cwd outside any registered project is not an error: the session is
+		// simply not in one, and the later path still applies.
+		if cwd := strings.TrimSpace(p.CWD); cwd != "" {
+			project, projectErr := d.store.ResolveProject(ctx, cwd)
+			if projectErr == nil {
+				if err := d.ensureAgentSessionProject(ctx, canonicalID, project.ID); err != nil {
+					return nil, err
+				}
+			} else if !errors.Is(projectErr, store.ErrProjectNotFound) {
+				return nil, projectErr
+			}
+		}
+		assignment, err := d.store.MonitorAssignment(ctx, canonicalID)
+		if err != nil {
+			return nil, err
+		}
+		// The only consumer of this assignment is the MCP shim, which echoes it to
+		// the agent; no decision reads it, so it carries the visible role name.
+		assignment.Role = visibleRole(assignment.Role, len(assignment.Tasks) > 0)
+		return marshal(map[string]any{
+			"agent_session_id": canonicalID,
+			"reattached":       reattached,
+			"assignment":       assignment,
+		}, nil)
+
+	case "development.start":
+		var p struct {
+			AgentSessionID int64 `json:"agent_session_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.store.EnableDevelopmentMode(ctx, p.AgentSessionID); err != nil {
+			return nil, err
+		}
+		return marshal(map[string]any{"ok": true}, nil)
+
+	case "session.discard.request":
+		var p sessionDiscardRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		decision, err := d.store.RequestSessionDiscard(ctx, store.SessionDiscardRequest{
+			ProjectID: p.ProjectID, GoalID: p.GoalID, TargetSessionID: p.TargetSessionID,
+			RequestedBy: p.AgentSessionID, Reason: p.Reason,
+		})
+		return marshal(decision, err)
+
+	case "session.discard":
+		var p sessionDiscardParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.store.DiscardSession(ctx, p.ProjectID, p.TargetSessionID, p.DecisionID, p.AgentSessionID); err != nil {
+			return nil, err
+		}
+		return marshal(map[string]any{"ok": true}, nil)
+
+	case "handoff.recover":
+		var p handoffRecoverParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		result, err := d.recoverHandoff(ctx, p)
+		return marshal(result, err)
+
+	case "session.role":
+		var p struct {
+			AgentSessionID    int64 `json:"agent_session_id"`
+			RequireIdentified bool  `json:"require_identified"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+
+		response, err := d.deriveSessionRole(ctx, p.AgentSessionID)
+		if err != nil {
+			return nil, err
+		}
+		// A row that holds nothing derives executor; for a transport that never
+		// identified that is "unknown", not a role the agent should obey.
+		if p.RequireIdentified && response.Role == "executor" && response.ProjectID == 0 {
+			unidentified, err := d.store.AgentSessionUnidentified(ctx, p.AgentSessionID)
+			if err != nil {
+				return nil, err
+			}
+			if unidentified {
+				return nil, fmt.Errorf("%w: %s", ErrSessionNotIdentified, identifyHint)
+			}
+		}
+		uiLocale, err := d.store.GetUILocale(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(roleResponseFor(response, uiLocale), nil)
+
+	case "session.stop_check":
+		var p struct {
+			SessionKey     string `json:"session_key"`
+			StopHookActive bool   `json:"stop_hook_active"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		response, err := d.stopCheck(ctx, p.SessionKey, p.StopHookActive)
+		return marshal(response, err)
+
+	case "session.monitor_check":
+		var p struct {
+			SessionKey string `json:"session_key"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		response, err := d.monitorCheck(ctx, p.SessionKey)
+		return marshal(response, err)
+
+	case "session.monitor_form_check":
+		// Fail open: a request this check cannot read or judge allows the Monitor.
+		var p struct {
+			SessionKey string `json:"session_key"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return marshal(monitorCheckResponse{}, nil)
+		}
+		return marshal(d.monitorFormCheck(ctx, p.SessionKey), nil)
+
+	case "session.tool_use.bind":
+		var p struct {
+			SessionKey string `json:"session_key"`
+			ToolUseID  string `json:"tool_use_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return marshal(d.bindToolUse(ctx, p.SessionKey, p.ToolUseID), nil)
+
+	case "session.tool_use.resolve":
+		var p struct {
+			AgentSessionID int64  `json:"agent_session_id"`
+			ToolUseID      string `json:"tool_use_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		response, err := d.resolveToolUse(ctx, p.AgentSessionID, p.ToolUseID)
+		return marshal(response, err)
+
+	case "project.create":
+		var p struct {
+			Name     string `json:"name"`
+			RootPath string `json:"root_path"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		rootPath := store.NormalizeRoot(ctx, p.RootPath)
+		if p.Name != "" {
+			ns, err := d.store.CreateProject(ctx, p.Name, rootPath)
+			return marshal(ns, nameConflictHint(err))
+		}
+		ns, err := d.store.CreateProject(ctx, store.DefaultProjectName(ctx, rootPath), rootPath)
+		if isProjectNameConflict(err) {
+			ns, err = d.store.CreateProject(ctx, parentBaseName(rootPath), rootPath)
+		}
+		return marshal(ns, nameConflictHint(err))
+
+	case "project.list":
+		projects, err := d.store.ListProjects(ctx)
+		return marshal(projects, err)
+
+	case "project.archive", "project.unarchive":
+		var p struct {
+			ProjectID int64 `json:"project_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if req.Method == "project.archive" {
+			return marshal(d.store.ArchiveProject(ctx, p.ProjectID))
+		}
+		return marshal(d.store.UnarchiveProject(ctx, p.ProjectID))
+
+	case "project.claim":
+		var p struct {
+			ProjectID      int64 `json:"project_id"`
+			AgentSessionID int64 `json:"agent_session_id"`
+			Force          bool  `json:"force"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, p.ProjectID); err != nil {
+			return nil, err
+		}
+		claim := d.store.ClaimProject
+		if p.Force {
+			claim = d.store.ForceClaimProject
+		}
+		claimed, err := claim(ctx, p.ProjectID, p.AgentSessionID)
+		if errors.Is(err, store.ErrProjectAlreadyClaimed) {
+			return nil, ErrProjectAlreadyClaimed
+		}
+		return marshal(claimed, err)
+
+	case "project.release":
+		var p struct {
+			ProjectID      int64 `json:"project_id"`
+			AgentSessionID int64 `json:"agent_session_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		projectID := p.ProjectID
+		agentSessionID := p.AgentSessionID
+		if agentSessionID == 0 {
+			return nil, fmt.Errorf("project release requires agent_session_id: caller is not bound to project %d", projectID)
+		}
+		projects, err := d.store.ListProjects(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("project release authorization: list projects: %w", err)
+		}
+		isHolder := false
+		for _, project := range projects {
+			if project.ID == projectID {
+				isHolder = project.ClaimedBy == agentSessionID
+				break
+			}
+		}
+		callerProjectID, sessionProjectErr := d.store.ProjectIDForAgentSession(ctx, agentSessionID)
+		isProjectBound := sessionProjectErr == nil && callerProjectID == projectID
+		if !isHolder && !isProjectBound {
+			if sessionProjectErr != nil {
+				return nil, fmt.Errorf("project release denied: caller %d is not the holder and is not bound to project %d: %w", agentSessionID, projectID, sessionProjectErr)
+			}
+			return nil, fmt.Errorf("project release denied: caller %d is bound to project %d, not project %d", agentSessionID, callerProjectID, projectID)
+		}
+		err = d.store.ReleaseProject(ctx, projectID)
+		return marshal(nil, err)
+
+	case "goal.list":
+		var p struct {
+			Cwd                     string `json:"cwd"`
+			AgentSessionID          int64  `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		ns, err := d.resolveOrRegisterProject(ctx, p.Cwd)
+		if err != nil {
+			return nil, err
+		}
+		if p.AgentSessionID != 0 {
+			if err := d.store.AssociateAgentSessionWithProject(ctx, p.AgentSessionID, ns.ID); err != nil {
+				return nil, err
+			}
+		}
+		goals, err := d.store.ListGoals(ctx, ns.ID)
+		if err != nil {
+			return nil, err
+		}
+		goalHandoffs, err := d.store.ListOpenGoalHandoffs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		type goalListTask struct {
+			ID          int64             `json:"id"`
+			GoalID      int64             `json:"goal_id"`
+			Title       string            `json:"title"`
+			Description string            `json:"description"`
+			Status      domain.TaskStatus `json:"status"`
+			ClaimedBy   int64             `json:"claimed_by"`
+			Order       int               `json:"order"`
+		}
+		type goalListResponse struct {
+			ID                int64              `json:"id"`
+			DerivedFromGoalID int64              `json:"derived_from_goal_id,omitempty"`
+			Title             string             `json:"title"`
+			ContentChars      int                `json:"content_chars"`
+			TaskCounts        goalListTaskCounts `json:"task_counts"`
+			Status            domain.GoalStatus  `json:"status"`
+			ClaimedBy         int64              `json:"claimed_by,omitempty"`
+			PendingState      string             `json:"pending_state,omitempty"`
+			CreatedAt         time.Time          `json:"created_at"`
+			Tasks             []goalListTask     `json:"tasks"`
+		}
+		visibleGoals := make([]goalListResponse, 0, len(goals))
+		awaitingApprovalCount := 0
+		for _, goal := range goals {
+			if goal.Status == domain.GoalDone || goal.Status == domain.GoalDropped {
+				continue
+			}
+			openDecisions, err := d.store.ListOpenDecisions(ctx, goal.ID)
+			if err != nil {
+				return nil, err
+			}
+			awaitingApproval := false
+			for _, decision := range openDecisions {
+				if decision.Kind == domain.KindGoalReview {
+					awaitingApproval = true
+					break
+				}
+			}
+			if awaitingApproval {
+				awaitingApprovalCount++
+				continue
+			}
+			tasks, err := d.store.ListTasks(ctx, goal.ID)
+			if err != nil {
+				return nil, err
+			}
+			taskHandoffs, err := d.store.ListOpenTaskHandoffsForGoal(ctx, goal.ID)
+			if err != nil {
+				return nil, err
+			}
+			activeTasks := make([]goalListTask, 0, len(tasks))
+			taskCounts := goalListTaskCounts{}
+			for _, task := range tasks {
+				switch task.Status {
+				case domain.TaskTodo:
+					taskCounts.Todo++
+				case domain.TaskDoing:
+					taskCounts.Doing++
+				case domain.TaskDone:
+					taskCounts.Done++
+				case domain.TaskDropped:
+					taskCounts.Dropped++
+				}
+				if task.Status != domain.TaskTodo && task.Status != domain.TaskDoing {
+					continue
+				}
+				activeTasks = append(activeTasks, goalListTask{
+					ID:          task.ID,
+					GoalID:      task.GoalID,
+					Title:       task.Title,
+					Description: summaryLine(task.Description),
+					Status:      task.Status,
+					ClaimedBy:   taskHandoffClaimedBy(taskHandoffs[task.ID]),
+					Order:       task.Order,
+				})
+			}
+			pendingState, err := d.store.GoalPendingState(ctx, goal.ID)
+			if err != nil {
+				return nil, err
+			}
+			visibleGoals = append(visibleGoals, goalListResponse{
+				ID:                goal.ID,
+				DerivedFromGoalID: goal.DerivedFromGoalID,
+				Title:             summaryLine(goal.Content),
+				ContentChars:      utf8.RuneCountInString(goal.Content),
+				TaskCounts:        taskCounts,
+				Status:            goal.Status,
+				ClaimedBy:         goalHandoffClaimedBy(goalHandoffs[goal.ID]),
+				PendingState:      pendingState,
+				CreatedAt:         goal.CreatedAt,
+				Tasks:             activeTasks,
+			})
+		}
+		// spec section 7: goal.list returns active Goals and unapplied answers together.
+		// This return value lets a new session recover answers (spec section 8, paragraph 3).
+		// Mark matching agent_session_id answers as applied; return others for reference only.
+		mine, err := d.store.PollDecisions(ctx, p.AgentSessionID, 0)
+		if err != nil {
+			return nil, err
+		}
+		orphaned, orphanedScope, err := d.unappliedDecisionsForRecovery(ctx, ns.ID, p.AgentSessionID)
+		if err != nil {
+			return nil, err
+		}
+		data := map[string]any{
+			"project":                  ns,
+			"goals":                    visibleGoals,
+			"awaiting_approval_count":  awaitingApprovalCount,
+			"answered_decisions":       mine,
+			"orphaned_decisions":       orphaned,
+			"orphaned_decisions_scope": orphanedScope,
+		}
+		if !p.IncludeUnappliedAnswers {
+			return marshal(data, nil)
+		}
+		return marshal(responseWithUnappliedDecisions{
+			Data:               data,
+			UnappliedDecisions: unappliedDecisionNotifications(orphaned),
+		}, nil)
+
+	case "goal.get":
+		var p struct {
+			GoalID int64 `json:"goal_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		tasks, err := d.store.ListTasks(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		data := map[string]any{
+			"goal":  goal,
+			"tasks": tasks,
+		}
+		decisions, err := d.store.ListDecisionsForGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		for _, decision := range decisions {
+			if decision.TaskID != 0 || decision.Kind != domain.KindGoalReview {
+				continue
+			}
+			review := goalReviewProjection{
+				DecisionID:  decision.ID,
+				Status:      decision.Status,
+				AnswerLabel: decision.AnswerLabel,
+				AnswerText:  decision.AnswerText,
+				AnsweredAt:  decision.AnsweredAt,
+				AppliedAt:   decision.AppliedAt,
+			}
+			if goal.Status == domain.GoalActive && decision.Status == domain.DecisionApplied && decision.AnswerLabel == "approve" {
+				review.NextCommanderAction = "goal.review.complete"
+			}
+			data["goal_review"] = review
+		}
+		return marshal(data, nil)
+
+	case "review.exchange.list":
+		return d.listReviewExchangesRPC(ctx, req.Params, peerID)
+
+	case "goal.sessions":
+		var p struct {
+			GoalID int64 `json:"goal_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		sessions, err := d.store.ListGoalSessions(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		// The store keeps the internal names; users see executor (goal holder)
+		// and task_worker (task receiver).
+		for i := range sessions {
+			sessions[i].Role = visibleRole(sessions[i].Role, sessions[i].Role == "executor")
+		}
+		return marshal(map[string]any{"sessions": sessions}, nil)
+
+	case "goal.create":
+		var p struct {
+			Cwd     string `json:"cwd"`
+			Content string `json:"content"`
+			Creator string `json:"creator"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		project, err := d.store.ResolveProject(ctx, p.Cwd)
+		if err != nil {
+			return nil, fmt.Errorf("project is not registered; run `atct project add` first: %w", err)
+		}
+		goal, err := d.store.CreateGoal(ctx, project.ID, p.Content, p.Creator)
+		return marshal(goal, err)
+
+	case "goal.claim":
+		var p struct {
+			GoalID                  int64 `json:"goal_id"`
+			AgentSessionID          int64 `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		claimed, err := d.store.ClaimGoal(ctx, p.GoalID, p.AgentSessionID)
+		if errors.Is(err, store.ErrGoalAlreadyClaimed) {
+			return nil, ErrGoalAlreadyClaimed
+		}
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(claimed, err)
+		}
+		unapplied, err := d.unappliedDecisionsForSession(ctx, p.GoalID, p.AgentSessionID)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(responseWithUnappliedDecisions{
+			Data:               claimed,
+			UnappliedDecisions: unappliedDecisionNotifications(unapplied),
+		}, nil)
+
+	case "goal.release":
+		var p struct {
+			GoalID int64 `json:"goal_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		err := d.store.ReleaseGoal(ctx, p.GoalID)
+		return marshal(nil, err)
+
+	case "goal.withdraw":
+		var p struct {
+			GoalID         int64  `json:"goal_id"`
+			AgentSessionID int64  `json:"agent_session_id"`
+			Reason         string `json:"reason"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		// Withdrawing throws away work other sessions may be doing, so it
+		// belongs to the role that owns the project rather than to whoever
+		// happens to hold the goal.
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "goal withdrawal"); err != nil {
+			return nil, err
+		}
+		if err := d.store.WithdrawActiveGoal(ctx, p.GoalID, p.Reason); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		return marshal(goal, err)
+
+	case "goal.update_request_report":
+		var p struct {
+			GoalID         int64  `json:"goal_id"`
+			Spec           string `json:"spec"`
+			Plan           string `json:"plan"`
+			AgentSessionID int64  `json:"agent_session_id"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeGoalHandoffHolder(ctx, p.GoalID, p.AgentSessionID, "goal request report"); err != nil {
+			return nil, err
+		}
+		updated, err := d.store.UpdateGoalRequestReport(ctx, p.GoalID, p.Spec, p.Plan)
+		return marshal(updated, err)
+
+	case "task.update_content":
+		var p struct {
+			TaskID                  int64   `json:"task_id"`
+			Title                   *string `json:"title"`
+			Description             *string `json:"description"`
+			AgentSessionID          int64   `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool    `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goalID, err := d.store.GetTaskGoalID(ctx, p.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, goalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		updated, err := d.store.UpdateTaskContent(ctx, p.TaskID, p.Title, p.Description, p.AgentSessionID)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(updated, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, updated, goalID, p.AgentSessionID)
+		return marshal(response, err)
+
+	case "task.create":
+		var p struct {
+			HandoffID               string   `json:"handoff_id"`
+			GoalID                  int64    `json:"goal_id"`
+			Agent                   string   `json:"agent"`
+			IdempotencyKey          string   `json:"idempotency_key"`
+			Titles                  []string `json:"titles"`
+			Descriptions            []string `json:"descriptions"`
+			AgentSessionID          int64    `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool     `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		// The MCP contract always supplies handoff_id. Keep the historical raw
+		// RPC fallback usable for migration, but enforce the role-scoped path.
+		if p.HandoffID != "" {
+			if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, p.GoalID, 0, p.AgentSessionID, "task creation"); err != nil {
+				return nil, err
+			}
+		}
+		var tasks []domain.Task
+		var err error
+		if p.HandoffID != "" {
+			tasks, err = d.store.CreateTasksForHandoff(ctx, p.HandoffID, p.AgentSessionID, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
+		} else {
+			goal, getErr := d.store.GetGoal(ctx, p.GoalID)
+			if getErr != nil {
+				return nil, getErr
+			}
+			if err = d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err == nil {
+				handoffs, listErr := d.store.ListTaskCreateHandoffs(ctx, p.GoalID)
+				if listErr != nil {
+					return nil, listErr
+				}
+				if len(handoffs) != 0 {
+					err = store.ErrTaskCreateHandoffState
+				} else {
+					tasks, err = d.store.CreateTasks(ctx, p.GoalID, p.Agent, p.IdempotencyKey, p.Titles, p.Descriptions)
+					if err == nil {
+						tasks = tasksCreatedWithIdempotencyKey(tasks, p.IdempotencyKey)
+					}
+				}
+			}
+		}
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(tasks, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, tasks, p.GoalID, p.AgentSessionID)
+		return marshal(response, err)
+
+	case "task.create_handoff.receive":
+		var p struct {
+			HandoffID  string `json:"handoff_id"`
+			ReceivedBy int64  `json:"received_by"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		h, err := d.store.ReceiveTaskCreateHandoff(ctx, p.HandoffID, p.ReceivedBy)
+		return marshal(h, err)
+
+	case "task.update":
+		var p struct {
+			TaskID                  int64    `json:"task_id"`
+			Status                  string   `json:"status"`
+			Commits                 []string `json:"commits"`
+			AgentSessionID          int64    `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool     `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		targetProjectID, err := d.store.ProjectIDForTask(ctx, p.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, targetProjectID); err != nil {
+			return nil, err
+		}
+		st, err := domain.ParseTaskStatus(p.Status)
+		if err != nil {
+			return nil, err
+		}
+		if len(p.Commits) > 0 {
+			projects, err := d.store.ListProjects(ctx)
+			if err != nil {
+				return nil, err
+			}
+			var projectRoot string
+			for _, project := range projects {
+				if project.ID == targetProjectID {
+					projectRoot = project.RootPath
+					break
+				}
+			}
+			resolvedCommits := make([]domain.TaskCommit, 0, len(p.Commits))
+			for _, sha := range p.Commits {
+				commit, err := d.store.ResolveCommit(ctx, projectRoot, sha)
+				if err != nil {
+					return nil, err
+				}
+				resolvedCommits = append(resolvedCommits, commit)
+			}
+			for _, commit := range resolvedCommits {
+				commit.CreatedAt = time.Now()
+				if err := d.store.LinkTaskCommit(ctx, p.TaskID, commit); err != nil {
+					return nil, err
+				}
+			}
+		}
+		tk, err := d.store.UpdateTask(ctx, p.TaskID, st, p.AgentSessionID)
+		if err == nil {
+			tk.Description = summaryLine(tk.Description)
+		}
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(tk, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, tk, tk.GoalID, p.AgentSessionID)
+		return marshal(response, err)
+
+	case "task.handoff.request", "handoff.request":
+		var p taskHandoffRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.requestTaskHandoff(ctx, p)
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "handoff.entry.append":
+		return d.appendTaskHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "handoff.entry.history":
+		return d.historyTaskHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "task.handoff.receive":
+		var p taskHandoffReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.receiveTaskHandoff(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		response, err := d.receiveTaskHandoffResponse(ctx, p, handoff)
+		return marshal(response, err)
+
+	case "handoff.receive":
+		var p taskHandoffReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		var handoff store.TaskHandoff
+		var err error
+		if p.HandoffID == "" {
+			handoff, err = d.store.ReceiveTaskHandoffForTask(ctx, p.TaskID, p.ReceivedBy)
+		} else {
+			handoff, err = d.store.ReceiveTaskHandoff(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		}
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "handoff.complete":
+		var p struct {
+			HandoffID         string `json:"handoff_id"`
+			TaskID            int64  `json:"task_id"`
+			CompleteReport    string `json:"complete_report"`
+			AgentSessionID    int64  `json:"agent_session_id"`
+			Capability        string `json:"capability"`
+			CallerCapability  string `json:"caller_capability"`
+			MonitorCapability string `json:"monitor_capability"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		capabilitySessionID, capabilityErr := d.sessionFromCapability(capabilityFields{
+			Capability: p.Capability, CallerCapability: p.CallerCapability, MonitorCapability: p.MonitorCapability,
+		}, p.AgentSessionID, peerID)
+		if capabilityErr != nil {
+			return nil, capabilityErr
+		}
+		if capabilitySessionID != 0 && p.HandoffID != "" {
+			handoff, err := d.store.GetTaskHandoff(ctx, p.HandoffID)
+			if err != nil {
+				return nil, err
+			}
+			if err := requireHandoffParticipant(capabilitySessionID, handoff.RequestedBy, handoff.ReceivedBy); err != nil {
+				return nil, err
+			}
+		}
+		var handoff store.TaskHandoff
+		var err error
+		if p.HandoffID == "" {
+			handoff, err = d.store.CompleteTaskHandoffForTask(ctx, p.TaskID, p.CompleteReport)
+		} else {
+			handoff, err = d.store.CompleteTaskHandoff(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+		}
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "task.handoff.review.request":
+		var p taskHandoffReviewRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"executor"}, 0, 0, p.TaskID, p.RequestedBy, "task handoff review request"); err != nil {
+			return nil, err
+		}
+		note := d.taskReviewNote(ctx, p.TaskID)
+		handoff, err := d.store.RequestTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.RequestedBy, appendFindings(p.ReviewRequestReport, note))
+		return marshal(handoff, err)
+
+	case "task.handoff.review.receive":
+		var p taskHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.ReceivedBy, "task handoff review receipt"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceiveTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		if err != nil {
+			return nil, err
+		}
+		role, evidence, err := d.receiveRoleEvidence(ctx, p.ReceivedBy, 0, 0, handoff.TaskID, handoff.ID)
+		if err != nil {
+			return nil, err
+		}
+		return marshal(responseWithRoleEvidence{Data: handoff, Role: role, ClaimEvidence: evidence}, nil)
+
+	case "task.handoff.review.reject":
+		var p taskHandoffReviewRejectParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.ReviewerID, "task handoff review rejection"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RejectTaskHandoffReview(ctx, p.HandoffID, p.TaskID, p.ReviewerID, p.RejectReport)
+		return marshal(handoff, err)
+
+	case "task.handoff.review.reject.receive":
+		var p taskHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceiveTaskHandoffReviewRejection(ctx, p.HandoffID, p.TaskID, p.ReceivedBy)
+		return marshal(handoff, err)
+
+	case "task.handoff.complete":
+		var p taskHandoffCompleteParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if p.AgentSessionID == 0 {
+			return nil, ErrHandoffCompletionSessionRequired
+		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, 0, p.TaskID, p.AgentSessionID, "task handoff completion"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.completeTaskHandoff(ctx, p)
+		return marshal(handoff, err)
+
+	case "task.handoff.report.amend":
+		var p struct {
+			HandoffID      string `json:"handoff_id"`
+			TaskID         int64  `json:"task_id"`
+			CompleteReport string `json:"complete_report"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.AmendTaskHandoffReport(ctx, p.HandoffID, p.TaskID, p.CompleteReport)
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "goal.handoff.request":
+		var p goalHandoffRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.requestGoalHandoff(ctx, p)
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "goal.handoff.entry.append":
+		return d.appendGoalHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "goal.handoff.entry.history":
+		return d.historyGoalHandoffEntryRPC(ctx, req.Params, peerID)
+
+	case "goal.handoff.receive":
+		var p goalHandoffReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.receiveGoalHandoff(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		response, err := d.receiveGoalHandoffResponse(ctx, p, handoff)
+		if err != nil {
+			return nil, err
+		}
+		return marshalCanonicalHandoffWithRoleEvidence(handoff, response)
+
+	case "goal.handoff.review.request":
+		var p goalHandoffReviewRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, p.GoalID, 0, p.RequestedBy, "goal handoff review request"); err != nil {
+			return nil, err
+		}
+		if err := d.refuseGoalBranchProblems(ctx, p.GoalID); err != nil {
+			return nil, err
+		}
+		note, err := d.goalReviewGate(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RequestGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, appendFindings(p.ReviewRequestReport, note))
+		return marshal(handoff, err)
+
+	case "goal.handoff.review.receive":
+		var p goalHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.ReceivedBy, "goal handoff review receipt"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceiveGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+		if err != nil {
+			return nil, err
+		}
+		response, err := d.receiveGoalReviewResponse(ctx, p, handoff)
+		return marshal(response, err)
+
+	case "goal.handoff.review.reject":
+		var p goalHandoffReviewRejectParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.ReviewerID, "goal handoff review rejection"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RejectGoalHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReviewerID, p.RejectReport)
+		return marshal(handoff, err)
+
+	case "goal.handoff.review.reject.receive":
+		var p goalHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceiveGoalHandoffReviewRejection(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+		return marshal(handoff, err)
+
+	case "goal.handoff.complete":
+		var p goalHandoffCompleteParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if p.AgentSessionID == 0 {
+			return nil, ErrHandoffCompletionSessionRequired
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "goal handoff completion"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.completeGoalHandoff(ctx, p)
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "goal.review.request":
+		var p goalReviewRequestParams
+		if err := decodeStrictJSON(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.authorizeCommander(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID, "goal review request"); err != nil {
+			return nil, err
+		}
+		report := domain.CompletionReport{
+			WorkDone:    p.WorkDone,
+			NowPossible: p.NowPossible,
+			HowToVerify: p.HowToVerify,
+			Surprises:   p.Surprises,
+			NeedsReview: p.NeedsReview,
+			NextGoalIDs: p.NextGoalIDs,
+		}
+		review, err := d.store.RequestGoalReview(ctx, p.GoalID, p.AgentSessionID, report)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(review, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, review, p.GoalID, p.AgentSessionID, review.ID)
+		return marshal(response, err)
+
+	case "goal.review.complete":
+		var p goalReviewCompleteParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.authorizeCommander(ctx, p.GoalID, goal.ProjectID, p.AgentSessionID, "goal review completion"); err != nil {
+			return nil, err
+		}
+		completed, err := d.store.FinalizeGoalReview(ctx, p.GoalID, p.AgentSessionID)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(completed, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, completed, p.GoalID, p.AgentSessionID)
+		return marshal(response, err)
+
+	case "goal.handoff.report.amend":
+		var p struct {
+			HandoffID      string `json:"handoff_id"`
+			GoalID         int64  `json:"goal_id"`
+			CompleteReport string `json:"complete_report"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.AmendGoalHandoffReport(ctx, p.HandoffID, p.GoalID, p.CompleteReport)
+		return marshalCanonicalHandoff(handoff, err)
+
+	case "plan.handoff.review.request":
+		var p planHandoffReviewRequestParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"subcommander"}, 0, p.GoalID, 0, p.RequestedBy, "plan handoff review request"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RequestPlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.RequestedBy, p.ReviewRequestReport)
+		return marshal(handoff, err)
+
+	case "plan.handoff.review.receive":
+		var p planHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.ReceivedBy, "plan handoff review receipt"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceivePlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+		if err != nil {
+			return nil, err
+		}
+		response, err := d.receivePlanReviewResponse(ctx, p, handoff)
+		return marshal(response, err)
+
+	case "plan.handoff.review.reject":
+		var p planHandoffReviewRejectParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.ReviewerID, "plan handoff review rejection"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.RejectPlanHandoffReview(ctx, p.HandoffID, p.GoalID, p.ReviewerID, p.RejectReport)
+		return marshal(handoff, err)
+
+	case "plan.handoff.review.reject.receive":
+		var p planHandoffReviewReceiveParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.ReceivePlanHandoffReviewRejection(ctx, p.HandoffID, p.GoalID, p.ReceivedBy)
+		return marshal(handoff, err)
+
+	case "plan.handoff.complete":
+		var p planHandoffCompleteParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if p.AgentSessionID == 0 {
+			return nil, fmt.Errorf("plan handoff completion requires agent_session_id")
+		}
+		if err := d.authorizeRole(ctx, []string{"commander"}, 0, p.GoalID, 0, p.AgentSessionID, "plan handoff completion"); err != nil {
+			return nil, err
+		}
+		handoff, err := d.store.CompletePlanHandoff(ctx, p.HandoffID, p.GoalID, p.AgentSessionID, p.CompleteReport)
+		return marshal(handoff, err)
+
+	case "decision.ask":
+		var p struct {
+			GoalID                  int64           `json:"goal_id"`
+			TaskID                  int64           `json:"task_id"`
+			Question                string          `json:"question"`
+			Options                 []domain.Option `json:"options"`
+			DefaultOption           string          `json:"default_option"`
+			DefaultAfterMs          *int64          `json:"default_after_ms"`
+			AgentSessionID          int64           `json:"agent_session_id"`
+			WaitMs                  *int            `json:"wait_ms"`
+			IncludeUnappliedAnswers bool            `json:"include_unapplied_answers"`
+			AfterReview             bool            `json:"after_review"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		role, err := d.deriveSessionRole(ctx, p.AgentSessionID)
+		if err != nil {
+			return nil, err
+		}
+		if role.Role == "subcommander" {
+			return nil, errors.New("an executor cannot file a decision to the human; " +
+				"instead append an entry of kind review_requested to your goal handoff with atct_goal_handoff_entry_append, " +
+				"whose body holds the question, the options (label / description / consequence), and your recommendation and reason (an action that only matters after the merge goes in needs_review, not in a decision); " +
+				"the commander files it with atct_decision_ask and returns the answer on the same handoff as a review_received entry whose in_reply_to_id is your request entry's id")
+		}
+		kind := domain.KindDecision
+		if p.AfterReview {
+			kind = domain.KindPostMerge
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		if p.TaskID != 0 {
+			targetProjectID, err := d.store.ProjectIDForTask(ctx, p.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, targetProjectID); err != nil {
+				return nil, err
+			}
+		}
+		dec, err := d.store.AskDecision(ctx, store.AskInput{
+			GoalID: p.GoalID, TaskID: p.TaskID, Kind: kind,
+			Question: p.Question, Options: p.Options, DefaultOption: p.DefaultOption,
+			DefaultAfterMs: p.DefaultAfterMs, AgentSessionID: p.AgentSessionID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		waitMs := 30000
+		if p.WaitMs != nil {
+			waitMs = *p.WaitMs
+		}
+		if waitMs <= 0 {
+			data := map[string]any{"parked": true, "decision_id": dec.ID}
+			if !p.IncludeUnappliedAnswers {
+				return marshal(data, nil)
+			}
+			response, err := d.responseWithScopedUnappliedDecisions(ctx, data, p.GoalID, p.AgentSessionID, dec.ID)
+			if err != nil {
+				return nil, err
+			}
+			goal, err := d.store.GetGoal(ctx, p.GoalID)
+			if err != nil {
+				return nil, err
+			}
+			response.ClaimableTasks, err = d.listClaimableTasks(ctx, goal.ProjectID, p.TaskID)
+			return marshal(response, err)
+		}
+		answered, ok, err := d.store.WaitForAnswer(ctx, dec.ID, time.Duration(waitMs)*time.Millisecond)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			data := map[string]any{"parked": true, "decision_id": dec.ID}
+			if !p.IncludeUnappliedAnswers {
+				return marshal(data, nil)
+			}
+			response, err := d.responseWithScopedUnappliedDecisions(ctx, data, p.GoalID, p.AgentSessionID, dec.ID)
+			if err != nil {
+				return nil, err
+			}
+			goal, err := d.store.GetGoal(ctx, p.GoalID)
+			if err != nil {
+				return nil, err
+			}
+			response.ClaimableTasks, err = d.listClaimableTasks(ctx, goal.ProjectID, p.TaskID)
+			return marshal(response, err)
+		}
+		applied, err := d.store.PollDecisions(ctx, p.AgentSessionID, dec.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(applied) > 0 {
+			answered = applied[0]
+		}
+		data := map[string]any{"parked": false, "decision": answered}
+		if !p.IncludeUnappliedAnswers {
+			return marshal(data, nil)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, data, p.GoalID, p.AgentSessionID, dec.ID)
+		return marshal(response, err)
+
+	case "decision.poll":
+		var p struct {
+			AgentSessionID          int64 `json:"agent_session_id"`
+			DecisionID              int64 `json:"decision_id"`
+			IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if p.DecisionID != 0 {
+			decision, err := d.store.GetDecision(ctx, p.DecisionID)
+			if err != nil {
+				return nil, err
+			}
+			role, err := d.deriveSessionRole(ctx, p.AgentSessionID)
+			if err != nil {
+				return nil, err
+			}
+			if p.AgentSessionID == 0 {
+				return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
+			}
+			if role.Role == "commander" && decision.AgentSessionID != p.AgentSessionID {
+				goal, err := d.store.GetGoal(ctx, decision.GoalID)
+				if err != nil {
+					return nil, err
+				}
+				if goal.ProjectID != role.ProjectID {
+					return nil, fmt.Errorf("decision %d is owned by another agent session", p.DecisionID)
+				}
+				routed := store.DecisionRoutesToCommander(decision) || goal.Status != domain.GoalActive
+				if !routed {
+					// Read-only: PollDecisions would mark the owner's decision applied.
+					if !p.IncludeUnappliedAnswers {
+						return marshal([]domain.Decision{decision}, nil)
+					}
+					response, err := d.responseWithScopedUnappliedDecisions(ctx, []domain.Decision{decision}, decision.GoalID, p.AgentSessionID, decision.ID)
+					return marshal(response, err)
+				}
+			}
+			if role.Role == "subcommander" && role.GoalID != 0 {
+				if decision.GoalID != role.GoalID {
+					return nil, fmt.Errorf("%w: decision %d belongs to goal %d, not the goal %d you hold; hand it to that goal's owner instead of polling it",
+						ErrDecisionOutsideGoal, p.DecisionID, decision.GoalID, role.GoalID)
+				}
+			}
+		}
+		decs, err := d.store.PollDecisions(ctx, p.AgentSessionID, p.DecisionID)
+		if err == nil && p.DecisionID == 0 && p.AgentSessionID != 0 {
+			decs, err = d.appendCommanderRoutedDecisions(ctx, p.AgentSessionID, decs)
+		}
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(decs, err)
+		}
+		var goalID int64
+		if len(decs) > 0 {
+			goalID = decs[0].GoalID
+		} else if p.DecisionID != 0 {
+			decision, err := d.store.GetDecision(ctx, p.DecisionID)
+			if err != nil {
+				return nil, err
+			}
+			goalID = decision.GoalID
+		}
+		if goalID == 0 {
+			return marshal(responseWithUnappliedDecisions{Data: decs}, nil)
+		}
+		excludedIDs := make([]int64, 0, len(decs))
+		for _, decision := range decs {
+			excludedIDs = append(excludedIDs, decision.ID)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, decs, goalID, p.AgentSessionID, excludedIDs...)
+		return marshal(response, err)
+
+	case "decision.answer":
+		var p decisionAnswerParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		decision, err := d.answerDecisionFromChat(ctx, p)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(decision, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, decision, decision.GoalID, p.AgentSessionID, decision.ID)
+		return marshal(response, err)
+
+	case "decision.withdraw":
+		var p struct {
+			DecisionID              int64  `json:"decision_id"`
+			Reason                  string `json:"reason"`
+			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		var decision domain.Decision
+		if p.IncludeUnappliedAnswers {
+			var err error
+			decision, err = d.store.GetDecision(ctx, p.DecisionID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err := d.store.WithdrawDecision(ctx, p.DecisionID, p.Reason); err != nil {
+			return nil, err
+		}
+		data := map[string]any{"ok": true}
+		if !p.IncludeUnappliedAnswers {
+			return marshal(data, nil)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, data, decision.GoalID, 0, decision.ID)
+		return marshal(response, err)
+
+	case "goal.set_derived_from":
+		var p struct {
+			GoalID                  int64 `json:"goal_id"`
+			DerivedFromGoalID       int64 `json:"derived_from_goal_id"`
+			AgentSessionID          int64 `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool  `json:"include_unapplied_answers"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		goal, err := d.store.GetGoal(ctx, p.GoalID)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.ensureAgentSessionProject(ctx, p.AgentSessionID, goal.ProjectID); err != nil {
+			return nil, err
+		}
+		if err := d.store.SetGoalDerivedFrom(ctx, p.GoalID, p.DerivedFromGoalID); err != nil {
+			return nil, err
+		}
+		goal, err = d.store.GetGoal(ctx, p.GoalID)
+		if err != nil || !p.IncludeUnappliedAnswers {
+			return marshal(goal, err)
+		}
+		response, err := d.responseWithScopedUnappliedDecisions(ctx, goal, p.GoalID, p.AgentSessionID)
+		return marshal(response, err)
+
+	case "goal.complete":
+		var p struct {
+			GoalID                  int64  `json:"goal_id"`
+			WorkDone                string `json:"work_done"`
+			NowPossible             string `json:"now_possible"`
+			HowToVerify             string `json:"how_to_verify"`
+			Surprises               string `json:"surprises"`
+			NeedsReview             string `json:"needs_review"`
+			AgentSessionID          int64  `json:"agent_session_id"`
+			IncludeUnappliedAnswers bool   `json:"include_unapplied_answers"`
+		}
+		if err := decodeStrictJSON(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return nil, errors.New(retiredGoalCompletionDiagnostic)
+	}
+	return nil, fmt.Errorf("unknown method: %s", req.Method)
+}
+
+func decodeStrictJSON(data []byte, dst any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(dst)
+}
+
+func marshal(v any, err error) (json.RawMessage, error) {
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(v)
+}

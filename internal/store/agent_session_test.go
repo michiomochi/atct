@@ -1,0 +1,557 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestIdentifyAgentSessionStoresKey(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	registeredID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, registeredID, " stable-key ")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession: %v", err)
+	}
+	if canonicalID != registeredID {
+		t.Fatalf("canonical ID = %d, want %d", canonicalID, registeredID)
+	}
+	if reattached {
+		t.Fatal("reattached = true, want false for a new key")
+	}
+
+	var storedKey string
+	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, canonicalID).Scan(&storedKey); err != nil {
+		t.Fatalf("read session key: %v", err)
+	}
+	if storedKey != "stable-key" {
+		t.Fatalf("session key = %q, want stable-key", storedKey)
+	}
+}
+
+func TestIdentifyAgentSessionReattachesExistingKey(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	firstID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(first): %v", err)
+	}
+	if canonicalID, reattached, err := s.IdentifyAgentSession(ctx, firstID, "stable-key"); err != nil {
+		t.Fatalf("IdentifyAgentSession(first): %v", err)
+	} else if canonicalID != firstID || reattached {
+		t.Fatalf("first identify = (%d, %v), want (%d, false)", canonicalID, reattached, firstID)
+	}
+
+	secondID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(second): %v", err)
+	}
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, secondID, "stable-key")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession(second): %v", err)
+	}
+	if canonicalID != firstID {
+		t.Fatalf("canonical ID = %d, want %d", canonicalID, firstID)
+	}
+	if !reattached {
+		t.Fatal("reattached = false, want true")
+	}
+
+	var keyCount int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE session_key = ?`, "stable-key").Scan(&keyCount); err != nil {
+		t.Fatalf("count session keys: %v", err)
+	}
+	if keyCount != 1 {
+		t.Fatalf("session key count = %d, want 1", keyCount)
+	}
+	var transportKey string
+	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, secondID).Scan(&transportKey); err != nil {
+		t.Fatalf("read transport session key: %v", err)
+	}
+	if transportKey != "" {
+		t.Fatalf("transport session key = %q, want empty", transportKey)
+	}
+}
+
+func TestIdentifyAgentSessionRestoresLivenessAfterReattach(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	oldID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if _, _, err := s.IdentifyAgentSession(ctx, oldID, "stable-key"); err != nil {
+		t.Fatalf("IdentifyAgentSession(old): %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET pid = ?, started_at = ? WHERE id = ?`, 999999, "stale-start", oldID); err != nil {
+		t.Fatalf("age agent session: %v", err)
+	}
+
+	originalProcessStartedAt := processStartedAt
+	processStartedAt = func(int) (string, error) { return "current-start", nil }
+	t.Cleanup(func() { processStartedAt = originalProcessStartedAt })
+
+	newID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(new): %v", err)
+	}
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, newID, "stable-key")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession(new): %v", err)
+	}
+	if canonicalID != oldID || !reattached {
+		t.Fatalf("identify = (%d, %v), want (%d, true)", canonicalID, reattached, oldID)
+	}
+	if !claimIsRunning(ctx, s, canonicalID) {
+		t.Fatal("claimIsRunning = false after reattach, want true")
+	}
+
+	var pid int
+	var startedAt string
+	if err := s.DB().QueryRowContext(ctx, `SELECT pid, started_at FROM agent_sessions WHERE id = ?`, canonicalID).Scan(&pid, &startedAt); err != nil {
+		t.Fatalf("read canonical process identity: %v", err)
+	}
+	if pid == 999999 || startedAt != "current-start" {
+		t.Fatalf("canonical process identity = (%d, %q), want current process and current-start", pid, startedAt)
+	}
+}
+
+func TestIdentifyAgentSessionRejectsBlankKeyWithoutWriting(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	transportID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+
+	var before struct {
+		RegisteredAt string
+		Pid          int
+		StartedAt    string
+		SessionKey   string
+	}
+	if err := s.DB().QueryRowContext(ctx, `SELECT registered_at, pid, started_at, session_key FROM agent_sessions WHERE id = ?`, transportID).Scan(&before.RegisteredAt, &before.Pid, &before.StartedAt, &before.SessionKey); err != nil {
+		t.Fatalf("read initial session: %v", err)
+	}
+
+	for _, key := range []string{"", "   "} {
+		if _, _, err := s.IdentifyAgentSession(ctx, transportID, key); err == nil {
+			t.Fatalf("IdentifyAgentSession(%q) succeeded, want error", key)
+		}
+		var after struct {
+			RegisteredAt string
+			Pid          int
+			StartedAt    string
+			SessionKey   string
+		}
+		if err := s.DB().QueryRowContext(ctx, `SELECT registered_at, pid, started_at, session_key FROM agent_sessions WHERE id = ?`, transportID).Scan(&after.RegisteredAt, &after.Pid, &after.StartedAt, &after.SessionKey); err != nil {
+			t.Fatalf("read unchanged session for %q: %v", key, err)
+		}
+		if after != before {
+			t.Fatalf("session changed for blank key %q: before=%+v after=%+v", key, before, after)
+		}
+	}
+}
+
+func TestIdentifyAgentSessionDoesNotStealDifferentKey(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	ownerID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(owner): %v", err)
+	}
+	if _, err := s.ClaimProject(ctx, project.ID, ownerID); err != nil {
+		t.Fatalf("ClaimProject: %v", err)
+	}
+	if _, _, err := s.IdentifyAgentSession(ctx, ownerID, "owner-key"); err != nil {
+		t.Fatalf("IdentifyAgentSession(owner): %v", err)
+	}
+
+	otherID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(other): %v", err)
+	}
+	canonicalID, reattached, err := s.IdentifyAgentSession(ctx, otherID, "other-key")
+	if err != nil {
+		t.Fatalf("IdentifyAgentSession(other): %v", err)
+	}
+	if canonicalID != otherID || reattached {
+		t.Fatalf("identify = (%d, %v), want (%d, false)", canonicalID, reattached, otherID)
+	}
+
+	var ownerKey string
+	var claimedBy int64
+	if err := s.DB().QueryRowContext(ctx, `SELECT session_key FROM agent_sessions WHERE id = ?`, ownerID).Scan(&ownerKey); err != nil {
+		t.Fatalf("read owner key: %v", err)
+	}
+	if err := s.DB().QueryRowContext(ctx, `SELECT claimed_by FROM projects WHERE id = ?`, project.ID).Scan(&claimedBy); err != nil {
+		t.Fatalf("read project claim: %v", err)
+	}
+	if ownerKey != "owner-key" || claimedBy != ownerID {
+		t.Fatalf("owner state = (key %q, claim %d), want (owner-key, %d)", ownerKey, claimedBy, ownerID)
+	}
+}
+
+func TestProjectIDForAgentSession(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	runProjectID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, runProjectID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+
+	got, err := s.ProjectIDForAgentSession(ctx, runProjectID)
+	if err != nil {
+		t.Fatalf("ProjectIDForAgentSession: %v", err)
+	}
+	if got != project.ID {
+		t.Fatalf("ProjectIDForAgentSession = %d, want %d", got, project.ID)
+	}
+
+	unassociatedID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(unassociated): %v", err)
+	}
+	if _, err := s.ProjectIDForAgentSession(ctx, unassociatedID); err == nil || !strings.Contains(err.Error(), "not associated") {
+		t.Fatalf("ProjectIDForAgentSession(unassociated) error = %v, want not associated error", err)
+	}
+	if _, err := s.ProjectIDForAgentSession(ctx, 999999); err == nil || !strings.Contains(err.Error(), "not registered") {
+		t.Fatalf("ProjectIDForAgentSession(missing) error = %v, want not registered error", err)
+	}
+}
+
+func TestProjectIDForTask(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	goal, err := s.CreateGoal(ctx, project.ID, "goal\n\ndescription", "human")
+	if err != nil {
+		t.Fatalf("CreateGoal: %v", err)
+	}
+	tasks, err := s.CreateTasks(ctx, goal.ID, "agent", "declare-key", []string{"task"}, []string{"Complete the declared task and make its result observable to the run."})
+	if err != nil {
+		t.Fatalf("CreateTasks: %v", err)
+	}
+
+	got, err := s.ProjectIDForTask(ctx, tasks[0].ID)
+	if err != nil {
+		t.Fatalf("ProjectIDForTask: %v", err)
+	}
+	if got != project.ID {
+		t.Fatalf("ProjectIDForTask = %d, want %d", got, project.ID)
+	}
+	if _, err := s.ProjectIDForTask(ctx, 0); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("ProjectIDForTask(missing) error = %v, want not found error", err)
+	}
+}
+
+func TestAgentSessionsCanShareProject(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	firstID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(first): %v", err)
+	}
+	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET registered_at = ? WHERE id = ?`, old, firstID); err != nil {
+		t.Fatalf("age first agent session: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, firstID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(first): %v", err)
+	}
+	secondID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(second): %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, secondID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(second): %v", err)
+	}
+
+	var count int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE project_id = ?`, project.ID).Scan(&count); err != nil {
+		t.Fatalf("count project agent sessions: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("project agent session count = %d, want 2", count)
+	}
+}
+
+func TestAgentSessionCleanupRemovesOldRecordsWithoutRemovingProjects(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	old := time.Now().UTC().Add(-90 * 24 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO agent_sessions (id, project_id, registered_at) VALUES (?, ?, ?), (?, NULL, ?)
+	`, 1001, project.ID, old, 1002, old); err != nil {
+		t.Fatalf("insert old agent sessions: %v", err)
+	}
+	currentID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, currentID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+
+	latest, err := s.LatestAgentSessionID(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("LatestAgentSessionID: %v", err)
+	}
+	if latest != currentID {
+		t.Fatalf("LatestAgentSessionID = %d, want %d", latest, currentID)
+	}
+	var oldCount int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, 1001, 1002).Scan(&oldCount); err != nil {
+		t.Fatalf("count old agent sessions: %v", err)
+	}
+	if oldCount != 0 {
+		t.Fatalf("old agent session count = %d, want 0", oldCount)
+	}
+	var projectCount int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id = ?`, project.ID).Scan(&projectCount); err != nil {
+		t.Fatalf("count project: %v", err)
+	}
+	if projectCount != 1 {
+		t.Fatalf("project count = %d, want 1", projectCount)
+	}
+}
+
+func TestAgentSessionAssociationKeepsExpiryCleanup(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	project, err := s.CreateProject(ctx, "atct", "/repos/atct")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	otherProject, err := s.CreateProject(ctx, "other", "/repos/other")
+	if err != nil {
+		t.Fatalf("CreateProject(other): %v", err)
+	}
+	currentID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession(current): %v", err)
+	}
+
+	old := time.Now().UTC().Add(-90 * 24 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `
+		INSERT INTO agent_sessions (id, project_id, registered_at) VALUES (?, ?, ?), (?, NULL, ?)
+	`, 1003, otherProject.ID, old, 1004, old); err != nil {
+		t.Fatalf("insert old agent sessions: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, currentID, project.ID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject(current): %v", err)
+	}
+
+	var remaining int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, 1003, 1004).Scan(&remaining); err != nil {
+		t.Fatalf("count expired agent sessions: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expired agent session count = %d, want 0", remaining)
+	}
+}
+
+func TestOpenMigratesV4DatabaseWithoutLosingHumanData(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "atct.db")
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	const v4Schema = `
+CREATE TABLE projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  root_path TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE goals (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  result_summary TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL REFERENCES goals(id),
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,
+  agent TEXT NOT NULL DEFAULT '',
+  files TEXT NOT NULL DEFAULT '[]',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  declare_key TEXT NOT NULL,
+  claimed_by TEXT NOT NULL DEFAULT '',
+  claimed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_tasks_declare_key ON tasks(goal_id, declare_key);
+CREATE TABLE decisions (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL REFERENCES goals(id),
+  task_id TEXT REFERENCES tasks(id),
+  kind TEXT NOT NULL,
+  question TEXT NOT NULL,
+  options TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL,
+  default_option TEXT NOT NULL DEFAULT '',
+  default_after_ms INTEGER,
+  default_applied_at TEXT,
+  answer_label TEXT NOT NULL DEFAULT '',
+  answer_text TEXT NOT NULL DEFAULT '',
+  answered_at TEXT,
+  applied_at TEXT,
+  run_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  CHECK (kind <> 'decision' OR status NOT IN ('open', 'answered') OR (task_id IS NOT NULL AND task_id <> ''))
+);
+CREATE INDEX idx_decisions_open ON decisions(status, goal_id);
+PRAGMA user_version = 4;
+`
+	if _, err := raw.Exec(v4Schema); err != nil {
+		raw.Close()
+		t.Fatalf("create v4 database: %v", err)
+	}
+	const createdAt = "2026-08-01T00:00:00Z"
+	if _, err := raw.Exec(`INSERT INTO projects (id, name, root_path, created_at) VALUES (?, ?, ?, ?)`, "project-human", "human project", "/repos/human", createdAt); err != nil {
+		raw.Close()
+		t.Fatalf("insert project: %v", err)
+	}
+	if _, err := raw.Exec(`INSERT INTO goals (id, project_id, title, description, status, result_summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, "goal-human", "project-human", "Human goal", "Keep this goal", "active", "", createdAt, createdAt); err != nil {
+		raw.Close()
+		t.Fatalf("insert goal: %v", err)
+	}
+	if _, err := raw.Exec(`INSERT INTO tasks (id, goal_id, title, status, agent, files, sort_order, declare_key, claimed_by, claimed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "task-human", "goal-human", "Human task", "todo", "human", `["src/main.go"]`, 0, "human-key", "human-run", createdAt, createdAt, createdAt); err != nil {
+		raw.Close()
+		t.Fatalf("insert task: %v", err)
+	}
+	if _, err := raw.Exec(`INSERT INTO decisions (id, goal_id, task_id, kind, question, options, status, default_option, default_after_ms, default_applied_at, answer_label, answer_text, answered_at, applied_at, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "decision-human", "goal-human", "task-human", "decision", "Keep this decision", `[{"label":"yes"}]`, "answered", "", nil, nil, "yes", "Keep it", createdAt, nil, "human-run", createdAt); err != nil {
+		raw.Close()
+		t.Fatalf("insert decision: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open v4 database: %v", err)
+	}
+	defer s.Close()
+	var version int
+	if err := s.DB().QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatalf("read migrated schema version: %v", err)
+	}
+	// Compare against the constant so a new migration does not silently leave
+	// this test asserting the previous version.
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
+	}
+	var agentSessionTable string
+	if err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_sessions'`).Scan(&agentSessionTable); err != nil {
+		t.Fatalf("find agent_sessions table: %v", err)
+	}
+	if agentSessionTable != "agent_sessions" {
+		t.Fatalf("agent_sessions table = %q, want agent_sessions", agentSessionTable)
+	}
+	var projectName, goalContent, taskTitle, decisionQuestion, decisionAnswer string
+	if err := s.DB().QueryRow(`SELECT name FROM projects WHERE id = 1`).Scan(&projectName); err != nil {
+		t.Fatalf("read migrated project: %v", err)
+	}
+	if err := s.DB().QueryRow(`SELECT content FROM goals WHERE id = 1`).Scan(&goalContent); err != nil {
+		t.Fatalf("read migrated goal: %v", err)
+	}
+	if err := s.DB().QueryRow(`SELECT title FROM tasks WHERE id = 1`).Scan(&taskTitle); err != nil {
+		t.Fatalf("read migrated task: %v", err)
+	}
+	if err := s.DB().QueryRow(`SELECT question, answer_text FROM decisions WHERE id = 1`).Scan(&decisionQuestion, &decisionAnswer); err != nil {
+		t.Fatalf("read migrated decision: %v", err)
+	}
+	if projectName != "human project" || goalContent != "Human goal\n\nKeep this goal" || taskTitle != "Human task" || decisionQuestion != "Keep this decision" || decisionAnswer != "Keep it" {
+		t.Fatalf("migrated human data changed: project=%q goal=%q task=%q decision=%q answer=%q", projectName, goalContent, taskTitle, decisionQuestion, decisionAnswer)
+	}
+}
+
+func TestAgentSessionIDByKeyUnknownKeyExplainsCause(t *testing.T) {
+	s := newTestStore(t)
+
+	_, err := s.AgentSessionIDByKey(context.Background(), "never-identified")
+	if err == nil {
+		t.Fatal("AgentSessionIDByKey(unknown) = nil error, want failure")
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("error leaks sql.ErrNoRows: %v", err)
+	}
+	for _, want := range []string{"never-identified", "atct_session_identify"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestAgentSessionCleanupKeepsExpiredSessionsReferencedByHandoffs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	goalID, holderID := newTaskRecoveryGoal(t, s, "expired-handoff")
+	commanderID := testSessionID("expired-handoff-commander")
+	old := time.Now().UTC().Add(-agentSessionRetention - time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().ExecContext(ctx, `UPDATE agent_sessions SET registered_at = ? WHERE id IN (?, ?)`, old, commanderID, holderID); err != nil {
+		t.Fatalf("backdate agent sessions: %v", err)
+	}
+
+	currentID, err := s.RegisterAgentSession(ctx, 0)
+	if err != nil {
+		t.Fatalf("RegisterAgentSession: %v", err)
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if err := s.AssociateAgentSessionWithProject(ctx, currentID, goal.ProjectID); err != nil {
+		t.Fatalf("AssociateAgentSessionWithProject: %v", err)
+	}
+
+	var remaining int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id IN (?, ?)`, commanderID, holderID).Scan(&remaining); err != nil {
+		t.Fatalf("count referenced agent sessions: %v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("referenced expired agent sessions = %d, want 2", remaining)
+	}
+}

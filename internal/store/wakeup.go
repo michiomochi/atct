@@ -1,0 +1,507 @@
+package store
+
+import (
+	"context"
+	"sort"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/michiomochi/atct-archive/internal/domain"
+)
+
+const (
+	EventWakeup                          = "wakeup"
+	EventKeepalive                       = "keepalive"
+	EventWakeupDiscrepancy               = "wakeup.discrepancy"
+	EventWakeupEvaluateFailed            = "wakeup.evaluate_failed"
+	EventHandoffReported                 = "handoff_reported"
+	EventWakeupCompletionReportMissing   = "wakeup.completion_report_missing"
+	EventWakeupCommitsMissing            = "wakeup.commits_missing"
+	EventWakeupUndeclaredGoal            = "wakeup.undeclared_goal"
+	EventWakeupAllTasksDropped           = "wakeup.all_tasks_dropped"
+	EventWakeupUnclaimedDoing            = "wakeup.unclaimed_doing"
+	EventWakeupHandoffUnreceived         = "wakeup.handoff_unreceived"
+	EventWakeupHandoffUnreported         = "wakeup.handoff_unreported"
+	EventWakeupClaimUndelegated          = "wakeup.claim_undelegated"
+	EventWakeupDecisionAnsweredUnapplied = "wakeup.decision_answered_unapplied"
+	EventWakeupDecisionDefaultUnapplied  = "wakeup.decision_default_unapplied"
+	EventWakeupClaimStale                = "wakeup.claim_stale"
+	EventWakeupMonitorLost               = "wakeup.monitor_lost"
+	EventGoalWithdrawn                   = "goal.withdrawn"
+	EventTaskHandoffRequest              = "task.handoff.request"
+	EventTaskHandoffReceive              = "task.handoff.receive"
+	EventTaskHandoffReviewRequest        = "task.handoff.review.request"
+	EventTaskHandoffReviewReceive        = "task.handoff.review.receive"
+	EventTaskHandoffReviewReject         = "task.handoff.review.reject"
+	EventTaskHandoffComplete             = "task.handoff.complete"
+	EventGoalHandoffRequest              = "goal.handoff.request"
+	EventGoalHandoffReceive              = "goal.handoff.receive"
+	EventGoalHandoffReviewRequest        = "goal.handoff.review.request"
+	EventGoalHandoffReviewReceive        = "goal.handoff.review.receive"
+	EventGoalHandoffReviewReject         = "goal.handoff.review.reject"
+	EventGoalHandoffComplete             = "goal.handoff.complete"
+	EventPlanHandoffReviewRequest        = "plan.handoff.review.request"
+	EventPlanHandoffReviewReceive        = "plan.handoff.review.receive"
+	EventPlanHandoffReviewReject         = "plan.handoff.review.reject"
+	EventPlanHandoffComplete             = "plan.handoff.complete"
+)
+
+// Thresholds for the inbox's stale signals. An answered decision that has not
+// been applied for AnsweredUnappliedAfter is stale; a project with active goals
+// whose monitors have not been seen for ProjectSilentAfter is stalled.
+const (
+	AnsweredUnappliedAfter = 10 * time.Minute
+	ProjectSilentAfter     = 30 * time.Minute
+)
+
+// Review event aliases use the transition-oriented names in code that needs
+// to describe the event rather than the RPC method that caused it.
+const (
+	EventTaskHandoffReviewRequested = EventTaskHandoffReviewRequest
+	EventTaskHandoffReviewReceived  = EventTaskHandoffReviewReceive
+	EventTaskHandoffReviewRejected  = EventTaskHandoffReviewReject
+	EventGoalHandoffReviewRequested = EventGoalHandoffReviewRequest
+	EventGoalHandoffReviewReceived  = EventGoalHandoffReviewReceive
+	EventGoalHandoffReviewRejected  = EventGoalHandoffReviewReject
+	EventPlanHandoffReviewRequested = EventPlanHandoffReviewRequest
+	EventPlanHandoffReviewReceived  = EventPlanHandoffReviewReceive
+	EventPlanHandoffReviewRejected  = EventPlanHandoffReviewReject
+)
+
+// ActionableWakeupEvent is the visible state that caused a wakeup notification. The
+// counts are part of the event so a consumer can act without a second query.
+type ActionableWakeupEvent struct {
+	WakeupID               string  `json:"wakeup_id"`
+	ProjectID              int64   `json:"project_id"`
+	ActionableGoalCount    int     `json:"actionable_goal_count"`
+	UnassignedGoalCount    int     `json:"unassigned_goal_count"`
+	UnassignedGoalIDs      []int64 `json:"unassigned_goal_ids"`
+	UnstartedTaskCount     int     `json:"unstarted_task_count"`
+	WaitingAnswerTaskCount int     `json:"waiting_answer_task_count"`
+	UntouchedTaskCount     int     `json:"untouched_task_count"`
+	DelegatedTaskCount     int     `json:"delegated_task_count"`
+	WaitingAnswerCount     int     `json:"waiting_answer_count"`
+}
+
+// WakeupDiscrepancyEvent records a disagreement between the Wakeup evaluation and an
+// independent evaluation using the same liveness-aware wakeup rules.
+type WakeupDiscrepancyEvent struct {
+	WakeupID                    string `json:"wakeup_id"`
+	ProjectID                   int64  `json:"project_id"`
+	EvaluatedUnstartedTaskCount int    `json:"evaluated_unstarted_task_count"`
+	CountedUnstartedTaskCount   int    `json:"counted_unstarted_task_count"`
+}
+
+// WakeupEvaluateFailedEvent reports that a maintenance evaluation returned
+// an error. Without it the keepalive published just before makes a failed
+// evaluation indistinguishable from "nothing to report".
+type WakeupEvaluateFailedEvent struct {
+	WakeupID string `json:"wakeup_id"`
+	Reason   string `json:"reason"`
+}
+
+// WakeupEvent identifies the project and object that need attention for a
+// target-specific wakeup.
+type WakeupEvent struct {
+	WakeupID         string `json:"wakeup_id"`
+	DecisionID       int64  `json:"decision_id,omitempty"`
+	ProjectID        int64  `json:"project_id"`
+	GoalID           int64  `json:"goal_id,omitempty"`
+	TaskID           int64  `json:"task_id,omitempty"`
+	HandoffID        string `json:"handoff_id,omitempty"`
+	WorktreeActivity string `json:"worktree_activity,omitempty"`
+	CompleteReport   string `json:"complete_report,omitempty"`
+}
+
+// KeepaliveEvent lets a watch process distinguish a quiet daemon from a dead
+// or disconnected stream.
+type KeepaliveEvent struct {
+	At time.Time `json:"at"`
+}
+
+// GoalWithdrawnEvent reports that an active goal was withdrawn and what the
+// withdrawal folded up. Withdrawal drops the goal's open tasks and force-closes
+// their handoffs, so the IDs travel with the event: the goal's subcommander is
+// the only watcher scoped to the goal, and it needs to name which executors to
+// stop without a second query.
+type GoalWithdrawnEvent struct {
+	GoalID               int64    `json:"goal_id"`
+	ProjectID            int64    `json:"project_id"`
+	Reason               string   `json:"reason"`
+	DroppedTaskIDs       []int64  `json:"dropped_task_ids,omitempty"`
+	ClosedTaskHandoffIDs []string `json:"closed_task_handoff_ids,omitempty"`
+	WithdrawnDecisionIDs []int64  `json:"withdrawn_decision_ids,omitempty"`
+}
+
+// HandoffReviewEvent carries the stable scope and report for a review
+// transition. It is intentionally shared by task, goal, and plan review
+// events; task_id is zero for goal and plan reviews.
+type HandoffReviewEvent struct {
+	ProjectID           int64  `json:"project_id"`
+	GoalID              int64  `json:"goal_id"`
+	TaskID              int64  `json:"task_id,omitempty"`
+	HandoffID           string `json:"handoff_id"`
+	ReviewerID          int64  `json:"reviewer_id,omitempty"`
+	ReviewRequestReport string `json:"review_request_report,omitempty"`
+	ReviewRejectReport  string `json:"review_reject_report,omitempty"`
+	CompleteReport      string `json:"complete_report,omitempty"`
+}
+
+// HandoffEvent carries a request, receipt, or reopened handoff transition.
+// The same payload is used for goal and task handoffs; task_id is zero for a
+// goal handoff.
+type HandoffEvent struct {
+	ProjectID      int64  `json:"project_id"`
+	GoalID         int64  `json:"goal_id"`
+	TaskID         int64  `json:"task_id,omitempty"`
+	HandoffID      string `json:"handoff_id"`
+	RequestedBy    int64  `json:"requested_by,omitempty"`
+	ReceivedBy     int64  `json:"received_by,omitempty"`
+	RequestReport  string `json:"request_report,omitempty"`
+	CompleteReport string `json:"complete_report,omitempty"`
+}
+
+// WakeupState is the evaluation result used by pending output and the daemon.
+// Tasks contains the actionable task list for pending's human-readable view.
+type WakeupState struct {
+	ActionableGoalCount        int
+	UnassignedGoalCount        int
+	UnassignedGoalIDs          []int64
+	UnstartedTaskCount         int
+	WaitingAnswerTaskCount     int
+	UntouchedTaskCount         int
+	DelegatedTaskCount         int
+	WaitingAnswerCount         int
+	Tasks                      []domain.Task
+	CompletedGoals             []domain.Goal
+	DroppedGoals               []domain.Goal
+	UnclaimedDoingTasks        []domain.Task
+	UndeclaredGoals            []domain.Goal
+	CommitlessGoals            []domain.Goal
+	HandoffsAwaitingReceipt    []TaskHandoff
+	HandoffsAwaitingReport     []TaskHandoff
+	UndelegatedClaims          []domain.Task
+	AnsweredUnappliedDecisions []domain.Decision
+	DefaultUnappliedDecisions  []domain.Decision
+	StaleClaims                []domain.Task
+}
+
+func classifyWakeupDecisions(decisions []domain.Decision, projectGoalIDs map[int64]struct{}) (humanAnswered, defaultApplied []domain.Decision) {
+	for _, decision := range decisions {
+		if decision.Status != domain.DecisionAnswered || decision.AppliedAt != nil {
+			continue
+		}
+		if _, ok := projectGoalIDs[decision.GoalID]; !ok {
+			continue
+		}
+		if decision.DefaultAppliedAt != nil {
+			defaultApplied = append(defaultApplied, decision)
+			continue
+		}
+		humanAnswered = append(humanAnswered, decision)
+	}
+	return humanAnswered, defaultApplied
+}
+
+// EvaluateWakeup assembles the wakeup state used by pending output and the
+// daemon. It combines goal, task, decision, and commit wakeups for active
+// goals. Unstarted tasks are classified independently so a claim on a sibling
+// task does not hide work that can still be claimed.
+func (s *Store) EvaluateWakeup(ctx context.Context, projectID int64) (WakeupState, error) {
+	goals, err := s.ListGoals(ctx, projectID)
+	if err != nil {
+		return WakeupState{}, err
+	}
+	projects, err := s.ListProjects(ctx)
+	if err != nil {
+		return WakeupState{}, err
+	}
+
+	decisions, err := s.ListUnappliedDecisions(ctx)
+	if err != nil {
+		return WakeupState{}, err
+	}
+	projectGoalIDs := make(map[int64]struct{}, len(goals))
+	activeGoalIDs := make(map[int64]struct{}, len(goals))
+	for _, goal := range goals {
+		projectGoalIDs[goal.ID] = struct{}{}
+		if goal.Status == domain.GoalActive {
+			activeGoalIDs[goal.ID] = struct{}{}
+		}
+	}
+
+	state := WakeupState{}
+	state.AnsweredUnappliedDecisions, state.DefaultUnappliedDecisions = classifyWakeupDecisions(decisions, projectGoalIDs)
+	_, staleClaimedTasks, err := ClaimLiveness(ctx, s, projectID)
+	if err != nil {
+		return WakeupState{}, err
+	}
+	for _, task := range staleClaimedTasks {
+		if _, ok := activeGoalIDs[task.GoalID]; ok {
+			state.StaleClaims = append(state.StaleClaims, task)
+		}
+	}
+
+	now := time.Now().UTC()
+	for _, goal := range goals {
+		if goal.Status != domain.GoalActive {
+			continue
+		}
+		tasks, err := s.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return WakeupState{}, err
+		}
+		openDecisions, err := s.ListOpenDecisions(ctx, goal.ID)
+		if err != nil {
+			return WakeupState{}, err
+		}
+		goalHandoffs, err := s.ListGoalHandoffs(ctx, goal.ID)
+		if err != nil {
+			return WakeupState{}, err
+		}
+		hasOpenGoalHandoff := false
+		for _, handoff := range goalHandoffs {
+			if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+				hasOpenGoalHandoff = true
+			}
+		}
+		taskHandoffs := make(map[int64][]TaskHandoff, len(tasks))
+		taskClaimed := make(map[int64]bool, len(tasks))
+		// Tasks are optional: a goal with none is not an anomaly, so it is no
+		// longer listed in UndeclaredGoals (the field stays, always empty, until
+		// stage 3 removes it).
+		if len(tasks) > 0 {
+			for _, task := range tasks {
+				handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
+				if err != nil {
+					return WakeupState{}, err
+				}
+				taskHandoffs[task.ID] = handoffs
+				for _, handoff := range handoffs {
+					if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+						taskClaimed[task.ID] = true
+						break
+					}
+				}
+			}
+			allDone := true
+			allDropped := true
+			allTerminal := true
+			hasDoneTask := false
+			for _, task := range tasks {
+				if task.Status != domain.TaskDone {
+					allDone = false
+				} else {
+					hasDoneTask = true
+				}
+				if task.Status != domain.TaskDropped {
+					allDropped = false
+				}
+				if task.Status != domain.TaskDone && task.Status != domain.TaskDropped {
+					allTerminal = false
+				}
+				if task.Status == domain.TaskDoing && !taskClaimed[task.ID] {
+					state.UnclaimedDoingTasks = append(state.UnclaimedDoingTasks, task)
+				}
+			}
+			if allDone {
+				state.CompletedGoals = append(state.CompletedGoals, goal)
+			} else if allDropped {
+				state.DroppedGoals = append(state.DroppedGoals, goal)
+			}
+			if allTerminal && hasDoneTask {
+				hasLinkedCommit := false
+				for _, task := range tasks {
+					commits, err := s.ListTaskCommits(ctx, task.ID)
+					if err != nil {
+						return WakeupState{}, err
+					}
+					if len(commits) > 0 {
+						hasLinkedCommit = true
+						break
+					}
+				}
+				if !hasLinkedCommit {
+					state.CommitlessGoals = append(state.CommitlessGoals, goal)
+				}
+			}
+		}
+		for _, task := range tasks {
+			handoffs := taskHandoffs[task.ID]
+			delegated := false
+			for _, handoff := range handoffs {
+				isDelegated := handoff.RequestedAt != nil &&
+					(handoff.ReceivedAt == nil || handoff.RequestedBy != handoff.ReceivedBy)
+				if isDelegated {
+					delegated = true
+					if handoff.ReceivedAt == nil {
+						state.HandoffsAwaitingReceipt = append(state.HandoffsAwaitingReceipt, handoff)
+					}
+				}
+				if isDelegated && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+					state.HandoffsAwaitingReport = append(state.HandoffsAwaitingReport, handoff)
+				}
+			}
+			if taskClaimed[task.ID] && !delegated {
+				commanderClaim := false
+				var sessionID int64
+				for _, handoff := range handoffs {
+					if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+						sessionID = handoff.ReceivedBy
+						break
+					}
+				}
+				if sessionID != 0 {
+					for _, project := range projects {
+						if project.ClaimedBy == sessionID {
+							commanderClaim = true
+							break
+						}
+					}
+				}
+				if !commanderClaim {
+					state.UndelegatedClaims = append(state.UndelegatedClaims, task)
+				}
+			}
+		}
+		if len(openDecisions) > 0 {
+			state.WaitingAnswerCount += len(openDecisions)
+		}
+		var unstarted []domain.Task
+		for _, task := range tasks {
+			if task.Status == domain.TaskTodo && !taskClaimed[task.ID] && (task.SnoozedUntil == nil || !task.SnoozedUntil.After(now)) {
+				unstarted = append(unstarted, task)
+			}
+		}
+		if len(unstarted) == 0 {
+			continue
+		}
+		state.ActionableGoalCount++
+		if !hasOpenGoalHandoff {
+			state.UnassignedGoalIDs = append(state.UnassignedGoalIDs, goal.ID)
+		}
+		state.UnstartedTaskCount += len(unstarted)
+		openDecisionTaskIDs := make(map[int64]struct{}, len(openDecisions))
+		for _, decision := range openDecisions {
+			if decision.TaskID != 0 {
+				openDecisionTaskIDs[decision.TaskID] = struct{}{}
+			}
+		}
+		for _, task := range unstarted {
+			if _, ok := openDecisionTaskIDs[task.ID]; ok {
+				state.WaitingAnswerTaskCount++
+				continue
+			}
+			state.UntouchedTaskCount++
+			state.Tasks = append(state.Tasks, task)
+		}
+	}
+	sort.Slice(state.UnassignedGoalIDs, func(i, j int) bool {
+		return state.UnassignedGoalIDs[i] < state.UnassignedGoalIDs[j]
+	})
+	state.UnassignedGoalCount = len(state.UnassignedGoalIDs)
+	state.DelegatedTaskCount = len(state.HandoffsAwaitingReport)
+	if state.Tasks == nil {
+		state.Tasks = []domain.Task{}
+	}
+	if state.UnassignedGoalIDs == nil {
+		state.UnassignedGoalIDs = []int64{}
+	}
+	if state.CompletedGoals == nil {
+		state.CompletedGoals = []domain.Goal{}
+	}
+	if state.DroppedGoals == nil {
+		state.DroppedGoals = []domain.Goal{}
+	}
+	if state.UnclaimedDoingTasks == nil {
+		state.UnclaimedDoingTasks = []domain.Task{}
+	}
+	if state.UndeclaredGoals == nil {
+		state.UndeclaredGoals = []domain.Goal{}
+	}
+	if state.CommitlessGoals == nil {
+		state.CommitlessGoals = []domain.Goal{}
+	}
+	if state.HandoffsAwaitingReceipt == nil {
+		state.HandoffsAwaitingReceipt = []TaskHandoff{}
+	}
+	if state.HandoffsAwaitingReport == nil {
+		state.HandoffsAwaitingReport = []TaskHandoff{}
+	}
+	if state.UndelegatedClaims == nil {
+		state.UndelegatedClaims = []domain.Task{}
+	}
+	if state.AnsweredUnappliedDecisions == nil {
+		state.AnsweredUnappliedDecisions = []domain.Decision{}
+	}
+	if state.DefaultUnappliedDecisions == nil {
+		state.DefaultUnappliedDecisions = []domain.Decision{}
+	}
+	if state.StaleClaims == nil {
+		state.StaleClaims = []domain.Task{}
+	}
+	return state, nil
+}
+
+// CountUnstartedTasks returns an independent simple count that does not
+// consult claim liveness. Callers that need the wakeup definition should use
+// CountUnstartedTasksForWakeup instead.
+func (s *Store) CountUnstartedTasks(ctx context.Context, projectID int64) (int, error) {
+	goals, err := s.ListGoals(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	now := time.Now().UTC()
+	for _, goal := range goals {
+		if goal.Status != domain.GoalActive {
+			continue
+		}
+		openDecisions, err := s.ListOpenDecisions(ctx, goal.ID)
+		if err != nil {
+			return 0, err
+		}
+		if len(openDecisions) > 0 {
+			continue
+		}
+		tasks, err := s.ListTasks(ctx, goal.ID)
+		if err != nil {
+			return 0, err
+		}
+		taskClaimed := make(map[int64]bool, len(tasks))
+		for _, task := range tasks {
+			handoffs, err := s.ListTaskHandoffs(ctx, task.ID)
+			if err != nil {
+				return 0, err
+			}
+			for _, handoff := range handoffs {
+				if handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil {
+					taskClaimed[task.ID] = true
+					break
+				}
+			}
+		}
+		for _, task := range tasks {
+			if task.Status == domain.TaskTodo && !taskClaimed[task.ID] && (task.SnoozedUntil == nil || !task.SnoozedUntil.After(now)) {
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+// CountUnstartedTasksForWakeup returns the total unstarted count from
+// EvaluateWakeup, including tasks classified as waiting for an answer or
+// untouched. CountUnstartedTasks intentionally keeps its independent
+// simple-count definition for callers that rely on it.
+func (s *Store) CountUnstartedTasksForWakeup(ctx context.Context, projectID int64) (int, error) {
+	state, err := s.EvaluateWakeup(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	return state.UnstartedTaskCount, nil
+}
+
+func NewWakeupID() string {
+	return uuid.NewString()
+}

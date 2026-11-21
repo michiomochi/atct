@@ -1,0 +1,291 @@
+import { Button } from "@cloudflare/kumo/components/button";
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { formatDateTime } from "../i18n";
+import {
+  fetchTaskHandoffHistory,
+  fetchTaskReviewExchanges,
+  fetchTask,
+  snoozeTask,
+  subscribeToDecisionEvents,
+  type Decision,
+  type DecisionHistoryEntry,
+  type TaskDetailResponse,
+} from "../lib/api";
+import { activeSnoozeUntil, resolveRouteID } from "../lib/ui";
+import { AreaLoading, ErrorState } from "./StateMessage";
+import { DecisionAnswerForm } from "./DecisionAnswerForm";
+import { DecisionHistoryTable } from "./DecisionHistoryTable";
+import { Markdown } from "./Markdown";
+import { TaskCommitList } from "./TaskCommitList";
+import { HandoffTimeline } from "./HandoffTimeline";
+import { ReviewExchanges } from "./ReviewExchanges";
+
+interface Props {
+  id: string;
+}
+
+type LoadState =
+  | { kind: "loading" }
+  | { kind: "ready"; data: TaskDetailResponse }
+  | { kind: "error"; message: string };
+
+function errorMessage(reason: unknown, fallback: string): string {
+  return reason instanceof Error ? reason.message : fallback;
+}
+
+function displayValue(value: string | undefined, fallback: string): string {
+  return value?.trim() || fallback;
+}
+
+function taskHistoryFor(taskID: string, history: DecisionHistoryEntry[]): DecisionHistoryEntry[] {
+  return history.filter((decision) => decision.task_id === taskID);
+}
+
+function taskDecisionsFor(taskID: string, decisions: Decision[]): Decision[] {
+  return decisions.filter((decision) => decision.task_id === taskID);
+}
+
+export function TaskDetailPage({ id }: Props) {
+  const { t, i18n } = useTranslation();
+  const pathname = id === "_" && typeof window !== "undefined" ? window.location.pathname : "";
+  const resolvedID = resolveRouteID(id, pathname, "/tasks/");
+  const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [updatePending, setUpdatePending] = useState(false);
+  const [snoozePending, setSnoozePending] = useState(false);
+  const [snoozeError, setSnoozeError] = useState<string | null>(null);
+  const [snoozeDate, setSnoozeDate] = useState("");
+  const locale = i18n.language.startsWith("ja") ? "ja" : "en";
+
+  const load = useCallback(async () => {
+    setUpdatePending(false);
+    setState({ kind: "loading" });
+    try {
+      setState({ kind: "ready", data: await fetchTask(resolvedID) });
+    } catch (reason) {
+      setState({ kind: "error", message: errorMessage(reason, t("goal.error.load")) });
+    }
+  }, [resolvedID, t]);
+
+  const handleDecisionEvent = useCallback(() => {
+    setUpdatePending(true);
+  }, []);
+
+  const fetchHandoffHistory = useCallback(
+    (handoffID: string, afterID: number) => fetchTaskHandoffHistory(resolvedID, handoffID, afterID),
+    [resolvedID],
+  );
+
+  const fetchReviewExchanges = useCallback(() => fetchTaskReviewExchanges(resolvedID), [resolvedID]);
+
+  useEffect(() => {
+    void load();
+    return subscribeToDecisionEvents(handleDecisionEvent);
+  }, [handleDecisionEvent, load]);
+
+  const data = state.kind === "ready" ? state.data : undefined;
+  const taskOpenDecisions = data ? taskDecisionsFor(data.task.id, data.open_decisions) : [];
+  const taskHistory = data ? taskHistoryFor(data.task.id, data.decision_history) : [];
+  const taskCommits = data?.commits ?? [];
+  const noValue = t("task.detail.none");
+  const activeUntil = data ? activeSnoozeUntil(data.task.snoozed_until) : undefined;
+  const retry = useCallback(() => void load(), [load]);
+  const handleSnooze = useCallback(async (until: string | null) => {
+    setSnoozePending(true);
+    setSnoozeError(null);
+    try {
+      await snoozeTask(resolvedID, until);
+      setSnoozeDate("");
+      retry();
+    } catch (reason) {
+      setSnoozeError(errorMessage(reason, t("task.snooze.error")));
+    } finally {
+      setSnoozePending(false);
+    }
+  }, [resolvedID, retry, t]);
+  const handleDateSnooze = () => {
+    if (!snoozeDate) return;
+    const selectedDate = new Date(`${snoozeDate}T23:59:59.999`);
+    if (!Number.isFinite(selectedDate.getTime())) {
+      setSnoozeError(t("task.snooze.error"));
+      return;
+    }
+    void handleSnooze(selectedDate.toISOString());
+  };
+
+  return (
+    <main className="min-w-0 max-w-full space-y-10 overflow-x-hidden">
+      {data && (
+        <>
+          <div className="border-b border-line pb-6">
+            <a
+              className="focus-ring text-base font-medium text-accent-700 hover:text-accent-600"
+              href={`/goals/${encodeURIComponent(data.goal.id)}`}
+            >
+              {data.goal.project_name ? `${t("goal.project")}: ${data.goal.project_name}` : t("goal.backToDashboard")}
+            </a>
+            <h1 className="mt-2 font-display text-3xl font-semibold text-ink-950">{data.task.title}</h1>
+            {data.task.description.trim() && (
+              <section className="mt-5 max-w-3xl">
+                <h2 className="font-display text-lg font-semibold text-ink-950">{t("task.detail.description")}</h2>
+                <div className="mt-2"><Markdown>{data.task.description}</Markdown></div>
+              </section>
+            )}
+          </div>
+
+          <ReviewExchanges fetchHistory={fetchReviewExchanges} showTaskBadge={false} />
+
+          <HandoffTimeline handoffs={data.handoffs ?? []} fetchHistory={fetchHandoffHistory} />
+
+          <section className="min-w-0 border-t border-line pt-5" aria-labelledby="task-attributes-heading">
+                <h2 id="task-attributes-heading" className="font-display text-lg font-semibold text-ink-950">
+              {t("task.detail.attributes")}
+            </h2>
+            <dl className="mt-6 grid min-w-0 gap-x-6 gap-y-4 border-t border-line pt-5 sm:grid-cols-2">
+              <div className="min-w-0">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.declareKey")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">
+                  {displayValue(data.task.declare_key, noValue)}
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.agent")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">{displayValue(data.task.agent, noValue)}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.claimedRun")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">{displayValue(data.task.claimed_by, noValue)}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.order")}</dt>
+                <dd className="mt-1 text-base text-ink-950">{data.task.order}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.createdAt")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">
+                  {displayValue(data.task.created_at ? formatDateTime(locale, data.task.created_at) : undefined, noValue)}
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.detail.updatedAt")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">
+                  {displayValue(data.task.updated_at ? formatDateTime(locale, data.task.updated_at) : undefined, noValue)}
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-base font-semibold uppercase text-ink-700">{t("task.snooze.label")}</dt>
+                <dd className="mt-1 break-words text-base text-ink-950">
+                  {activeUntil ? t("task.snooze.active", { until: formatDateTime(locale, activeUntil) }) : noValue}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="min-w-0 border-t border-line pt-5" aria-labelledby="task-snooze-heading">
+            <h2 id="task-snooze-heading" className="font-display text-lg font-semibold text-ink-950">
+              {t("task.snooze.heading")}
+            </h2>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={snoozePending}
+                className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
+                onClick={() => void handleSnooze(new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString())}
+              >
+                {snoozePending ? t("task.snooze.snoozing") : t("task.snooze.oneDay")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={snoozePending}
+                className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
+                onClick={() => void handleSnooze(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString())}
+              >
+                {snoozePending ? t("task.snooze.snoozing") : t("task.snooze.oneWeek")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={snoozePending}
+                className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
+                onClick={() => void handleSnooze(null)}
+              >
+                {snoozePending ? t("task.snooze.snoozing") : t("task.snooze.release")}
+              </Button>
+            </div>
+            <form className="mt-5 flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); handleDateSnooze(); }}>
+              <div>
+                <label htmlFor="task-snooze-date" className="block text-base font-semibold text-ink-700">{t("task.snooze.date")}</label>
+                <input
+                  id="task-snooze-date"
+                  type="date"
+                  value={snoozeDate}
+                  onChange={(event) => setSnoozeDate(event.target.value)}
+                  disabled={snoozePending}
+                  className="focus-ring mt-2 min-h-10 rounded border border-line bg-white px-3 py-2 text-base text-ink-950 disabled:cursor-wait disabled:opacity-60"
+                />
+              </div>
+              <Button
+                type="submit"
+                variant="outline"
+                disabled={snoozePending || !snoozeDate}
+                className="focus-ring px-3 py-2 text-base font-medium disabled:cursor-wait disabled:opacity-60"
+              >
+                {snoozePending ? t("task.snooze.snoozing") : t("task.snooze.submit")}
+              </Button>
+            </form>
+            {snoozeError && <p className="mt-3 text-base text-danger-700" role="alert">{snoozeError}</p>}
+          </section>
+
+          {taskCommits.length > 0 && (
+            <section className="min-w-0 border-t border-line pt-5" aria-labelledby="task-commits-heading">
+              <h2 id="task-commits-heading" className="font-display text-lg font-semibold text-ink-950">
+                {t("task.detail.commits")}
+              </h2>
+              <div className="mt-6">
+                <TaskCommitList taskID={resolvedID} commits={taskCommits} />
+              </div>
+            </section>
+          )}
+        </>
+      )}
+
+      {updatePending && (
+        <div className="border border-notice-800 bg-notice-100 px-4 py-4 text-base text-notice-800" role="status" aria-live="polite">
+          <p>{t("state.updateAvailable")}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="focus-ring mt-3 px-3 py-2 text-base font-medium"
+            onClick={retry}
+          >
+            {t("state.fetchLatest")}
+          </Button>
+        </div>
+      )}
+
+      {state.kind === "loading" && <AreaLoading label={t("task.detail.title")} />}
+      {state.kind === "error" && <ErrorState message={state.message} onRetry={retry} />}
+
+      {data && taskOpenDecisions.length > 0 && (
+        <section className="min-w-0 border-t border-line pt-5" data-testid="task-answer-form" aria-labelledby="task-answer-heading">
+          <h2 id="task-answer-heading" className="font-display text-lg font-semibold text-ink-950">{t("task.detail.answer")}</h2>
+          <div className="mt-4 space-y-5">
+            {taskOpenDecisions.map((decision) => (
+              <DecisionAnswerForm
+                key={decision.id}
+                decision={decision}
+                onUpdated={retry}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {data && taskHistory.length > 0 && (
+        <DecisionHistoryTable decisions={taskHistory} omittedCount={data.decision_history_omitted} />
+      )}
+    </main>
+  );
+}

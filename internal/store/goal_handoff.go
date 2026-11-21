@@ -1,0 +1,1660 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/michiomochi/atct-archive/internal/store/sqlcgen"
+)
+
+var (
+	ErrGoalHandoffNotFound               = errors.New("goal handoff not found")
+	ErrGoalHandoffLiveReceiver           = errors.New("goal handoff is held by a live receiver")
+	ErrGoalHandoffGoalMismatch           = errors.New("goal handoff goal mismatch")
+	ErrGoalHandoffProjectNotHeld         = errors.New("goal handoff requires the project claim: caller does not hold a live claim on project")
+	ErrGoalHandoffAlreadyOpen            = errors.New("goal handoff already open")
+	ErrGoalHandoffAmbiguous              = errors.New("multiple goal handoffs pending receipt")
+	ErrGoalHandoffReportEmpty            = errors.New("goal handoff needs a complete_report describing what was done, what was verified, and paths changed; without it, the record cannot distinguish completion from no report")
+	ErrGoalHandoffReviewState            = errors.New("goal handoff review is not in the required state")
+	ErrGoalHandoffReviewReviewerMismatch = errors.New("goal handoff review reviewer mismatch")
+	ErrGoalHandoffReviewReportEmpty      = errors.New("goal handoff review needs a non-empty report")
+	ErrPlanHandoffNotFound               = errors.New("plan handoff not found")
+	ErrPlanHandoffGoalMismatch           = errors.New("plan handoff goal mismatch")
+	ErrPlanHandoffReviewState            = errors.New("plan handoff review is not in the required state")
+	ErrPlanHandoffReviewerMismatch       = errors.New("plan handoff review reviewer mismatch")
+	ErrPlanHandoffReviewReportEmpty      = errors.New("plan handoff review needs a non-empty report")
+	ErrPlanHandoffGoalArtifactsEmpty     = errors.New("plan handoff review requires a non-empty canonical spec and plan")
+)
+
+const (
+	goalHandoffReclaimedReport = "セッションが停止した"
+	goalHandoffReleasedReport  = "ゴールを手放した（報告者なし）"
+)
+
+// GoalHandoff records one delegation between agents. Each event timestamp is
+// independent so a partial handoff remains observable.
+type GoalHandoff struct {
+	ID                        string
+	GoalID                    int64
+	RequestedBy               int64
+	ReceivedBy                int64
+	RequestReport             string
+	CompleteReport            string
+	ReviewRequestedBy         int64
+	ReviewRequestedAt         *time.Time
+	ReviewRequestReport       string
+	ReviewReceivedBy          int64
+	ReviewReceivedAt          *time.Time
+	ReviewRejectedAt          *time.Time
+	ReviewRejectReport        string
+	ReviewRejectionReceivedBy int64
+	ReviewRejectionReceivedAt *time.Time
+	RequestedAt               *time.Time
+	ReceivedAt                *time.Time
+	CompletedReportAt         *time.Time
+	RecoveredAt               *time.Time
+	RecoveryReport            string
+	Entries                   []HandoffEntry   `json:"entries,omitempty"`
+	HasMore                   bool             `json:"has_more,omitempty"`
+	NextCursor                int64            `json:"next_cursor,omitempty"`
+	History                   HandoffEntryPage `json:"history,omitempty"`
+}
+
+// PlanHandoff records a plan review routed from the goal handoff receiver back
+// to the goal handoff requester. A plan has no task claim or task status.
+type PlanHandoff struct {
+	ID                        string
+	GoalID                    int64
+	ReviewRequestedBy         int64
+	ReviewRequestedAt         *time.Time
+	ReviewRequestReport       string
+	ReviewReceivedBy          int64
+	ReviewReceivedAt          *time.Time
+	ReviewRejectedAt          *time.Time
+	ReviewRejectReport        string
+	ReviewRejectionReceivedBy int64
+	ReviewRejectionReceivedAt *time.Time
+	CompleteReport            string
+	CompletedReportAt         *time.Time
+}
+
+// GoalSession identifies an agent session that received a handoff for a goal.
+type GoalSession struct {
+	SessionKey  string
+	Role        string
+	HandoffOpen bool
+}
+
+func goalHandoffFromRow(row sqlcgen.GoalHandoff) (GoalHandoff, error) {
+	handoff := GoalHandoff{
+		ID:                        row.ID,
+		GoalID:                    row.GoalID,
+		RequestedBy:               nullableAgentSessionID(row.RequestedBy),
+		ReceivedBy:                nullableAgentSessionID(row.ReceivedBy),
+		RequestReport:             row.RequestReport.String,
+		CompleteReport:            row.CompleteReport.String,
+		ReviewRequestedBy:         nullableAgentSessionID(row.ReviewRequestedBy),
+		ReviewRequestReport:       row.ReviewRequestReport.String,
+		ReviewReceivedBy:          nullableAgentSessionID(row.ReviewReceivedBy),
+		ReviewRejectReport:        row.ReviewRejectReport.String,
+		ReviewRejectionReceivedBy: nullableAgentSessionID(row.ReviewRejectionReceivedBy),
+		RecoveryReport:            row.RecoveryReport.String,
+	}
+	var err error
+	if handoff.RequestedAt, err = parseGoalHandoffTime("requested_at", row.RequestedAt); err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.ReceivedAt, err = parseGoalHandoffTime("received_at", row.ReceivedAt); err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.CompletedReportAt, err = parseGoalHandoffTime("completed_report_at", row.CompletedReportAt); err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.ReviewRequestedAt, err = parseGoalHandoffTime("review_requested_at", row.ReviewRequestedAt); err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.ReviewReceivedAt, err = parseGoalHandoffTime("review_received_at", row.ReviewReceivedAt); err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.ReviewRejectedAt, err = parseGoalHandoffTime("review_rejected_at", row.ReviewRejectedAt); err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.ReviewRejectionReceivedAt, err = parseGoalHandoffTime("review_rejection_received_at", row.ReviewRejectionReceivedAt); err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.RecoveredAt, err = parseGoalHandoffTime("recovered_at", row.RecoveredAt); err != nil {
+		return GoalHandoff{}, err
+	}
+	return handoff, nil
+}
+
+func parseGoalHandoffTime(column string, value sql.NullString) (*time.Time, error) {
+	if !value.Valid || value.String == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value.String)
+	if err != nil {
+		return nil, fmt.Errorf("parse goal handoff %s: %w", column, err)
+	}
+	return &parsed, nil
+}
+
+func planHandoffFromRow(row sqlcgen.PlanHandoff) (PlanHandoff, error) {
+	handoff := PlanHandoff{
+		ID:                        row.ID,
+		GoalID:                    row.GoalID,
+		ReviewRequestedBy:         nullableAgentSessionID(row.ReviewRequestedBy),
+		ReviewRequestReport:       row.ReviewRequestReport.String,
+		ReviewReceivedBy:          nullableAgentSessionID(row.ReviewReceivedBy),
+		ReviewRejectReport:        row.ReviewRejectReport.String,
+		ReviewRejectionReceivedBy: nullableAgentSessionID(row.ReviewRejectionReceivedBy),
+		CompleteReport:            row.CompleteReport.String,
+	}
+	var err error
+	if handoff.ReviewRequestedAt, err = parseGoalHandoffTime("plan review_requested_at", row.ReviewRequestedAt); err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.ReviewReceivedAt, err = parseGoalHandoffTime("plan review_received_at", row.ReviewReceivedAt); err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.ReviewRejectedAt, err = parseGoalHandoffTime("plan review_rejected_at", row.ReviewRejectedAt); err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.ReviewRejectionReceivedAt, err = parseGoalHandoffTime("plan review_rejection_received_at", row.ReviewRejectionReceivedAt); err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.CompletedReportAt, err = parseGoalHandoffTime("plan completed_report_at", row.CompletedReportAt); err != nil {
+		return PlanHandoff{}, err
+	}
+	return handoff, nil
+}
+
+// goalHandoffReceiverID is for an error message, so an unreadable row answers
+// zero rather than replacing the refusal with a lookup failure.
+func goalHandoffRefusal(ctx context.Context, q *sqlcgen.Queries, handoffID string) (requested bool, receiver int64) {
+	handoff, err := q.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return false, 0
+	}
+	if handoff.ReceivedBy.Valid {
+		receiver = handoff.ReceivedBy.Int64
+	}
+	return handoff.RequestedAt.Valid, receiver
+}
+
+// GoalHandoffEverReceivedBy reports whether the session ever received a goal
+// handoff of the goal, open or closed.
+func (s *Store) GoalHandoffEverReceivedBy(ctx context.Context, goalID, agentSessionID int64) (bool, error) {
+	return sqlcgen.New(s.db).GoalHandoffEverReceivedBy(ctx, sqlcgen.GoalHandoffEverReceivedByParams{
+		GoalID: goalID, AgentSessionID: sql.NullInt64{Int64: agentSessionID, Valid: true},
+	})
+}
+
+func (s *Store) ensureGoalHandoffGoal(ctx context.Context, handoffID string, goalID int64) error {
+	existingGoalID, err := sqlcgen.New(s.db).GetGoalHandoffGoalID(ctx, handoffID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %q", ErrGoalHandoffNotFound, handoffID)
+	}
+	if err != nil {
+		return fmt.Errorf("find goal handoff %q: %w", handoffID, err)
+	}
+	if existingGoalID != goalID {
+		return fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, existingGoalID, goalID)
+	}
+	return nil
+}
+
+func (s *Store) ensureGoalHandoffGoalForRequest(ctx context.Context, handoffID string, goalID int64) error {
+	err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID)
+	if errors.Is(err, ErrGoalHandoffNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (s *Store) requireProjectClaimForGoal(ctx context.Context, goalID int64, requestedBy int64) error {
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return fmt.Errorf("find goal %d: %w", goalID, err)
+	}
+
+	project, err := sqlcgen.New(s.db).GetProject(ctx, goal.ProjectID)
+	if err != nil {
+		return fmt.Errorf("find project for goal %d: %w", goalID, err)
+	}
+
+	projectOwner := project.ClaimedBy
+	if projectOwner == requestedBy && projectOwner != 0 && claimIsRunning(ctx, s, projectOwner) {
+		return nil
+	}
+
+	return fmt.Errorf("%w: %d", ErrGoalHandoffProjectNotHeld, project.ID)
+}
+
+// reclaimOpenGoalHandoff enforces the one-open-handoff rule before inserting a
+// new request. A retry for the same handoff ID is allowed to fill an existing
+// receipt-only row. For a different ID, only a handoff whose owner is no longer
+// running may be reclaimed; an unknown owner is treated as active because its
+// liveness cannot be disproved.
+func (s *Store) reclaimOpenGoalHandoff(ctx context.Context, handoffID string, goalID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin goal handoff reclaim tx: %w", err)
+	}
+	defer tx.Rollback()
+	reclaimed, err := reclaimOpenGoalHandoffTx(ctx, tx, handoffID, goalID)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit goal handoff reclaim: %w", err)
+	}
+	if reclaimed != nil {
+		s.publishGoalHandoffReported(ctx, *reclaimed)
+	}
+	return nil
+}
+
+func reclaimOpenGoalHandoffTx(ctx context.Context, tx *sql.Tx, handoffID string, goalID int64) (*GoalHandoff, error) {
+	rows, err := sqlcgen.New(tx).ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("list open goal handoffs: %w", err)
+	}
+
+	var open *GoalHandoff
+	for i := range rows {
+		handoff, err := goalHandoffFromRow(rows[i])
+		if err != nil {
+			return nil, fmt.Errorf("parse open goal handoff: %w", err)
+		}
+		if handoff.CompletedReportAt != nil || handoff.RecoveredAt != nil || handoff.ID == handoffID {
+			continue
+		}
+		if open != nil {
+			return nil, fmt.Errorf("%w: goal %d has multiple open handoffs", ErrGoalHandoffAlreadyOpen, goalID)
+		}
+		candidate := handoff
+		open = &candidate
+	}
+	if open == nil {
+		return nil, nil
+	}
+
+	ownerID := open.ReceivedBy
+	if ownerID == 0 {
+		// An unreceived handoff has no receiver to inspect, so the requester
+		// is the only available liveness signal.
+		ownerID = open.RequestedBy
+	}
+	if ownerID == 0 || agentSessionLiveInQueries(ctx, sqlcgen.New(tx), ownerID, time.Now()) {
+		return nil, fmt.Errorf("%w: goal %d has a live handoff owner", ErrGoalHandoffAlreadyOpen, goalID)
+	}
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
+	result, err := sqlcgen.New(tx).CompleteGoalHandoff(ctx, sqlcgen.CompleteGoalHandoffParams{
+		ID:                open.ID,
+		GoalID:            goalID,
+		CompletedReportAt: sql.NullString{String: now, Valid: true},
+		CompleteReport:    sql.NullString{String: goalHandoffReclaimedReport, Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reclaim goal handoff %q: %w", open.ID, err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("reclaim goal handoff %q rows affected: %w", open.ID, err)
+	}
+	if rowsAffected != 1 {
+		return nil, fmt.Errorf("reclaim goal handoff %q was not completed", open.ID)
+	}
+	authorID := open.ReceivedBy
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", open.ID, HandoffEntryKindComplete, goalHandoffReclaimedReport, authorID, "", "", true, nowTime); err != nil {
+		return nil, fmt.Errorf("append reclaimed goal handoff entry: %w", err)
+	}
+	open.CompletedReportAt = &nowTime
+	open.CompleteReport = goalHandoffReclaimedReport
+	return open, nil
+}
+
+// openGoalHandoff returns the goal's single received, incomplete handoff.
+// Request-only handoffs are not claims and therefore do not authorize goal
+// release.
+func (s *Store) openGoalHandoff(ctx context.Context, goalID int64) (*GoalHandoff, error) {
+	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return nil, err
+	}
+
+	var open *GoalHandoff
+	for i := range handoffs {
+		if handoffs[i].ReceivedAt == nil || handoffs[i].CompletedReportAt != nil || handoffs[i].RecoveredAt != nil {
+			continue
+		}
+		if open != nil {
+			return nil, fmt.Errorf("%w: goal %d has multiple open handoffs", ErrGoalHandoffAmbiguous, goalID)
+		}
+		candidate := handoffs[i]
+		open = &candidate
+	}
+	return open, nil
+}
+
+// RequestGoalHandoff records the request side of a handoff. It requires the
+// requester to hold a live claim on the goal's project; receipt and completion
+// are separate calls.
+func (s *Store) RequestGoalHandoff(ctx context.Context, handoffID string, goalID int64, requestedBy int64, requestReport string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, requestedBy); err != nil {
+		return GoalHandoff{}, err
+	}
+	return s.requestGoalHandoff(ctx, handoffID, goalID, requestedBy, requestReport, true)
+}
+
+func (s *Store) requestGoalHandoffForClaim(ctx context.Context, handoffID string, goalID int64, requestedBy int64) (GoalHandoff, error) {
+	return s.requestGoalHandoff(ctx, handoffID, goalID, requestedBy, "", false)
+}
+
+func (s *Store) requestGoalHandoff(ctx context.Context, handoffID string, goalID int64, requestedBy int64, requestReport string, requireLiveClaim bool) (GoalHandoff, error) {
+	if err := s.ensureGoalHandoffGoalForRequest(ctx, handoffID, goalID); err != nil {
+		return GoalHandoff{}, err
+	}
+	if existing, err := s.GetGoalHandoff(ctx, handoffID); err == nil {
+		if existing.RecoveredAt != nil {
+			return GoalHandoff{}, fmt.Errorf("goal handoff %q was recovered and cannot be reused: %w", handoffID, ErrGoalHandoffReviewState)
+		}
+	} else if !errors.Is(err, ErrGoalHandoffNotFound) {
+		return GoalHandoff{}, err
+	}
+	if requireLiveClaim {
+		if err := s.requireProjectClaimForGoal(ctx, goalID, requestedBy); err != nil {
+			return GoalHandoff{}, err
+		}
+	}
+	if strings.TrimSpace(requestReport) != "" {
+		normalizedReport, err := normalizeHandoffEntryBody(requestReport)
+		if err != nil {
+			return GoalHandoff{}, err
+		}
+		requestReport = normalizedReport
+	}
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff request tx: %w", err)
+	}
+	defer tx.Rollback()
+	txq := sqlcgen.New(tx)
+	existing, lookupErr := txq.GetGoalHandoff(ctx, handoffID)
+	if lookupErr == nil && existing.CompletedReportAt.Valid && strings.TrimSpace(existing.CompletedReportAt.String) != "" {
+		return GoalHandoff{}, fmt.Errorf("%w: goal handoff %q is already complete; use amend or reopen", ErrHandoffEntryTerminal, handoffID)
+	}
+	if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+		return GoalHandoff{}, fmt.Errorf("find goal handoff before request: %w", lookupErr)
+	}
+	reclaimed, err := reclaimOpenGoalHandoffTx(ctx, tx, handoffID, goalID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	q := txq
+	existingEntryCount, err := txq.CountGoalHandoffRequestEntries(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("check existing goal handoff request entry: %w", err)
+	}
+	if err := txq.RequestGoalHandoff(ctx, sqlcgen.RequestGoalHandoffParams{
+		ID:            handoffID,
+		GoalID:        goalID,
+		RequestedBy:   sql.NullInt64{Int64: requestedBy, Valid: requestedBy != 0},
+		RequestedAt:   sql.NullString{String: now, Valid: true},
+		RequestReport: sql.NullString{String: requestReport, Valid: requestReport != ""},
+	}); err != nil {
+		return GoalHandoff{}, fmt.Errorf("request goal handoff: %w", err)
+	}
+	if existingEntryCount == 0 {
+		requestBody := requestReport
+		if strings.TrimSpace(requestBody) == "" {
+			requestBody = "requested"
+		}
+		if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", handoffID, HandoffEntryKindRequest, requestBody, requestedBy, "", "", true, nowTime); err != nil {
+			return GoalHandoff{}, fmt.Errorf("append goal handoff request entry: %w", err)
+		}
+	}
+	projectID, err := q.GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("find project for goal handoff request: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventGoalHandoffRequest,
+		Data: HandoffEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, RequestedBy: requestedBy, RequestReport: requestReport},
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff request: %w", err)
+	}
+	if reclaimed != nil {
+		s.publishGoalHandoffReported(ctx, *reclaimed)
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+// ReceiveGoalHandoff records the receipt side of a requested handoff.
+func (s *Store) ReceiveGoalHandoff(ctx context.Context, handoffID string, goalID int64, receivedBy int64) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return GoalHandoff{}, err
+	}
+	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
+		return GoalHandoff{}, err
+	}
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff receive tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	current, err := q.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
+		}
+		return GoalHandoff{}, fmt.Errorf("find goal handoff receipt state: %w", err)
+	}
+	if current.GoalID != goalID || !current.RequestedAt.Valid || strings.TrimSpace(current.RequestedAt.String) == "" {
+		return GoalHandoff{}, fmt.Errorf("%w: handoff %q has no request", ErrGoalHandoffNotFound, handoffID)
+	}
+	if current.ReceivedAt.Valid && current.ReceivedAt.String != "" && current.ReceivedBy.Valid && current.ReceivedBy.Int64 == receivedBy {
+		page, err := listHandoffEntries(ctx, q, "goal_handoff_entries", handoffID, 0, HandoffHistoryMaxLimit)
+		if err != nil {
+			return GoalHandoff{}, fmt.Errorf("list goal handoff history after retry receive: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return GoalHandoff{}, fmt.Errorf("commit goal handoff receive retry: %w", err)
+		}
+		received, err := s.GetGoalHandoff(ctx, handoffID)
+		if err != nil {
+			return GoalHandoff{}, err
+		}
+		received.Entries = page.Entries
+		received.HasMore = page.HasMore
+		received.NextCursor = page.NextCursor
+		received.History = page
+		return received, nil
+	}
+	// Before the receive rewrites goal_handoffs.received_by: the previous
+	// receiver is still in that row and must be matched. A refused receive
+	// returns before commit, so this rolls back with it.
+	if err := q.ReassignGoalDecisionsToReceiver(ctx, sqlcgen.ReassignGoalDecisionsToReceiverParams{
+		ReceivedBy: receivedBy,
+		GoalID:     goalID,
+	}); err != nil {
+		return GoalHandoff{}, fmt.Errorf("reassign goal decisions to receiver: %w", err)
+	}
+	result, err := q.ReceiveGoalHandoff(ctx, sqlcgen.ReceiveGoalHandoffParams{
+		ID:          handoffID,
+		GoalID:      goalID,
+		ReceivedBy:  sql.NullInt64{Int64: receivedBy, Valid: receivedBy != 0},
+		ReceivedAt:  sql.NullString{String: now, Valid: true},
+		LeaseCutoff: leaseCutoff(),
+	})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("receive goal handoff: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("receive goal handoff rows affected: %w", err)
+	}
+	if n == 0 {
+		// The row exists, or ensureGoalHandoffGoal would have said so, so the
+		// guard refused. Say which guard: an unrequested handoff and one held
+		// by a session that is still there need different answers.
+		if requested, receiver := goalHandoffRefusal(ctx, q, handoffID); requested && receiver != 0 {
+			return GoalHandoff{}, fmt.Errorf("goal handoff %s is held by session %d, whose lease is still being renewed: %w",
+				handoffID, receiver, ErrGoalHandoffLiveReceiver)
+		}
+		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", handoffID, HandoffEntryKindReceived, "received", receivedBy, "", "", true, nowTime); err != nil {
+		return GoalHandoff{}, fmt.Errorf("append goal handoff received entry: %w", err)
+	}
+	page, err := listHandoffEntries(ctx, q, "goal_handoff_entries", handoffID, 0, HandoffHistoryMaxLimit)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("list goal handoff history after receive: %w", err)
+	}
+	projectID, err := q.GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("find project for goal handoff receive: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventGoalHandoffReceive,
+		Data: HandoffEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReceivedBy: receivedBy},
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff receive: %w", err)
+	}
+	received, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	received.Entries = page.Entries
+	received.HasMore = page.HasMore
+	received.NextCursor = page.NextCursor
+	received.History = page
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return received, nil
+}
+
+// RequestGoalHandoffReview starts the review state for a received goal
+// handoff. The goal handoff receiver is the only session allowed to request
+// its review.
+func (s *Store) RequestGoalHandoffReview(ctx context.Context, handoffID string, goalID, requestedBy int64, reviewRequestReport string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, requestedBy); err != nil {
+		return GoalHandoff{}, err
+	}
+	if completeReportIsEmpty(reviewRequestReport) {
+		return GoalHandoff{}, ErrGoalHandoffReviewReportEmpty
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return GoalHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	if handoff.RequestedAt == nil || handoff.ReceivedAt == nil || handoff.CompletedReportAt != nil {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if handoff.ReceivedBy == 0 || handoff.ReceivedBy != requestedBy {
+		return GoalHandoff{}, fmt.Errorf("%w: goal handoff receiver %d cannot request review as %d", ErrGoalHandoffReviewReviewerMismatch, handoff.ReceivedBy, requestedBy)
+	}
+	if handoff.ReviewRequestedAt != nil && handoff.ReviewRejectedAt == nil {
+		return GoalHandoff{}, fmt.Errorf("%w: goal handoff review is already open", ErrGoalHandoffReviewState)
+	}
+
+	now := formatTimestamp(time.Now())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff review request tx: %w", err)
+	}
+	defer tx.Rollback()
+	if open, err := sqlcgen.New(tx).CountOpenDecisionsForGoal(ctx, goalID); err != nil {
+		return GoalHandoff{}, fmt.Errorf("count open decisions for goal handoff review request: %w", err)
+	} else if open > 0 {
+		return GoalHandoff{}, openGoalBlockersError(ctx, sqlcgen.New(tx), goalID, "")
+	}
+	result, err := sqlcgen.New(tx).RequestGoalHandoffReview(ctx, sqlcgen.RequestGoalHandoffReviewParams{
+		ReviewRequestedBy:   sql.NullInt64{Int64: requestedBy, Valid: true},
+		ReviewRequestedAt:   sql.NullString{String: now, Valid: true},
+		ReviewRequestReport: sql.NullString{String: reviewRequestReport, Valid: true},
+		ID:                  handoffID,
+		GoalID:              goalID,
+	})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("request goal handoff review: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("request goal handoff review rows affected: %w", err)
+	} else if affected == 0 {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	// A task-create handoff nobody received is moot once review is re-requested
+	// without new tasks; a received one stays open. Zero rows is fine.
+	if _, err := sqlcgen.New(tx).SupersedeOpenTaskCreateHandoff(ctx, sqlcgen.SupersedeOpenTaskCreateHandoffParams{
+		RecoveredAt:    sql.NullString{String: now, Valid: true},
+		RecoveryReport: sql.NullString{String: "superseded: goal review re-requested without new tasks", Valid: true},
+		GoalID:         goalID,
+	}); err != nil {
+		return GoalHandoff{}, fmt.Errorf("supersede open task-create handoff: %w", err)
+	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReviewRequested, reviewRequestReport, requestedBy, "", "", true, time.Now().UTC()); err != nil {
+		return GoalHandoff{}, err
+	}
+	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("find project for goal handoff review request: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventGoalHandoffReviewRequest,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReviewerID: requestedBy, ReviewRequestReport: reviewRequestReport},
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff review request: %w", err)
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+// ReceiveGoalHandoffReview records the reviewer's receipt. The original goal
+// handoff requester remains allowed, while a new current claimant of the goal's
+// project may receive the review after a claim turnover. A review already
+// received by another session is re-pointed to the current claimant, so a
+// commander that took over can request the human review itself.
+func (s *Store) ReceiveGoalHandoffReview(ctx context.Context, handoffID string, goalID, receivedBy int64) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return GoalHandoff{}, err
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return GoalHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	reReceive := handoff.ReviewReceivedAt != nil && handoff.ReviewReceivedBy != receivedBy &&
+		handoff.CompletedReportAt == nil && handoff.ReviewRejectedAt == nil && handoff.RecoveredAt == nil
+	if reReceive {
+		if err := s.requireProjectClaimForGoal(ctx, goalID, receivedBy); err != nil {
+			return GoalHandoff{}, fmt.Errorf("%w: review already received by %d: %v", ErrGoalHandoffReviewState, handoff.ReviewReceivedBy, err)
+		}
+	} else if handoff.ReviewRequestedAt == nil || handoff.CompletedReportAt != nil || handoff.ReviewReceivedAt != nil || handoff.ReviewRejectedAt != nil || handoff.ReviewRejectionReceivedAt != nil {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if !reReceive && (receivedBy == 0 || handoff.RequestedBy != receivedBy) {
+		if err := s.requireProjectClaimForGoal(ctx, goalID, receivedBy); err != nil {
+			return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not requester %d or current project claimant: %v", ErrGoalHandoffReviewReviewerMismatch, receivedBy, handoff.RequestedBy, err)
+		}
+	}
+
+	now := formatTimestamp(time.Now())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff review receive tx: %w", err)
+	}
+	defer tx.Rollback()
+	var result sql.Result
+	if reReceive {
+		result, err = sqlcgen.New(tx).ReReceiveGoalHandoffReview(ctx, sqlcgen.ReReceiveGoalHandoffReviewParams{
+			NewReviewReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true},
+			ReviewReceivedAt:    sql.NullString{String: now, Valid: true},
+			ID:                  handoffID,
+			GoalID:              goalID,
+			OldReviewReceivedBy: sql.NullInt64{Int64: handoff.ReviewReceivedBy, Valid: true},
+		})
+	} else {
+		result, err = sqlcgen.New(tx).ReceiveGoalHandoffReview(ctx, sqlcgen.ReceiveGoalHandoffReviewParams{
+			ReviewReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true},
+			ReviewReceivedAt: sql.NullString{String: now, Valid: true},
+			ID:               handoffID,
+			GoalID:           goalID,
+		})
+	}
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("receive goal handoff review: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("receive goal handoff review rows affected: %w", err)
+	} else if affected == 0 {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReviewReceived, "received", receivedBy, "", "", true, time.Now().UTC()); err != nil {
+		return GoalHandoff{}, err
+	}
+	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("find project for goal handoff review receive: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventGoalHandoffReviewReceive,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReviewerID: receivedBy},
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff review receive: %w", err)
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+// RecoverGoalHandoff clears a definitely stale review receipt or terminalizes
+// a definitely stale requester/receiver so a replacement handoff can be made.
+func (s *Store) RecoverGoalHandoff(ctx context.Context, handoffID string, goalID, callerID int64, reason string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, callerID); err != nil {
+		return GoalHandoff{}, err
+	}
+	if err := s.requireProjectClaimForGoal(ctx, goalID, callerID); err != nil {
+		return GoalHandoff{}, fmt.Errorf("recover goal handoff requires the current commander: %w", err)
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.GoalID != goalID || handoff.CompletedReportAt != nil {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if handoff.RecoveredAt != nil {
+		return handoff, nil
+	}
+	phase := ""
+	staleSessionID := int64(0)
+	switch {
+	case handoff.ReviewReceivedAt != nil:
+		phase = "review_received"
+		staleSessionID = handoff.ReviewReceivedBy
+	case handoff.ReceivedAt != nil:
+		phase = "received"
+		staleSessionID = handoff.ReceivedBy
+	case handoff.RequestedAt != nil:
+		phase = "requested"
+		staleSessionID = handoff.RequestedBy
+	default:
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if staleSessionID == 0 || staleSessionID == callerID {
+		return GoalHandoff{}, fmt.Errorf("recover goal handoff cannot replace its current owner: %w", ErrGoalHandoffReviewReviewerMismatch)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff recovery: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	sessionProof, err := canRecoverSessionInTx(ctx, q, staleSessionID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	recoveredAt := formatTimestamp(time.Now())
+	var result sql.Result
+	switch phase {
+	case "review_received":
+		result, err = q.RecoverGoalHandoffReview(ctx, sqlcgen.RecoverGoalHandoffReviewParams{
+			ID: handoffID, GoalID: goalID, ReviewReceivedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	case "received":
+		result, err = q.RecoverGoalHandoffReceiver(ctx, sqlcgen.RecoverGoalHandoffReceiverParams{
+			RecoveredAt: sql.NullString{String: recoveredAt, Valid: true}, RecoveryReport: sql.NullString{String: reason, Valid: true},
+			ID: handoffID, GoalID: goalID, ReceivedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	case "requested":
+		result, err = q.RecoverGoalHandoffRequester(ctx, sqlcgen.RecoverGoalHandoffRequesterParams{
+			RecoveredAt: sql.NullString{String: recoveredAt, Valid: true}, RecoveryReport: sql.NullString{String: reason, Valid: true},
+			ID: handoffID, GoalID: goalID, RequestedBy: sql.NullInt64{Int64: staleSessionID, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+		})
+	}
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("recover stale goal handoff owner: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return GoalHandoff{}, fmt.Errorf("recover stale goal handoff owner: %w", ErrGoalHandoffReviewState)
+	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindRequest, "recovered: "+reason, callerID, "", "", true, time.Now().UTC()); err != nil {
+		return GoalHandoff{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff recovery: %w", err)
+	}
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+// RejectGoalHandoffReview clears the reviewer receipt while keeping the goal
+// handoff claim open for another review cycle.
+func (s *Store) RejectGoalHandoffReview(ctx context.Context, handoffID string, goalID, reviewerID int64, rejectReport string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return GoalHandoff{}, err
+	}
+	if completeReportIsEmpty(rejectReport) {
+		return GoalHandoff{}, ErrGoalHandoffReviewReportEmpty
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return GoalHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	if handoff.ReviewReceivedAt == nil || handoff.CompletedReportAt != nil {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	// The current commander may reject a review its predecessor received.
+	if handoff.ReviewReceivedBy != reviewerID && s.requireProjectClaimForGoal(ctx, goalID, reviewerID) != nil {
+		return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not recorded reviewer %d or current project claimant", ErrGoalHandoffReviewReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
+	}
+
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff review rejection tx: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := sqlcgen.New(tx).RejectGoalHandoffReview(ctx, sqlcgen.RejectGoalHandoffReviewParams{
+		ReviewRejectedAt:   sql.NullString{String: now, Valid: true},
+		ReviewRejectReport: sql.NullString{String: rejectReport, Valid: true},
+		ID:                 handoffID,
+		GoalID:             goalID,
+	})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("reject goal handoff review: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("reject goal handoff review rows affected: %w", err)
+	} else if affected == 0 {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReviewRejected, rejectReport, reviewerID, "", "", true, time.Now().UTC()); err != nil {
+		return GoalHandoff{}, err
+	}
+	// Let the subcommander declare new tasks after a rejection. At most one
+	// open task-create handoff exists per goal, so reuse one that is open.
+	existing, err := sqlcgen.New(tx).ListTaskCreateHandoffs(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("list task-create handoffs for goal handoff review rejection: %w", err)
+	}
+	hasOpen := false
+	for _, row := range existing {
+		h, err := taskCreateHandoffFromRow(row)
+		if err != nil {
+			return GoalHandoff{}, err
+		}
+		if h.CompletedAt == nil && h.RecoveredAt == nil {
+			hasOpen = true
+		}
+	}
+	if !hasOpen {
+		if _, err := s.createTaskCreateHandoffTx(ctx, tx, goalID, reviewerID); err != nil {
+			return GoalHandoff{}, fmt.Errorf("create task-create handoff after goal handoff review rejection: %w", err)
+		}
+	}
+	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("find project for goal handoff review rejection: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventGoalHandoffReviewReject,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReviewerID: reviewerID, ReviewRejectReport: rejectReport},
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff review rejection: %w", err)
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+func (s *Store) ReceiveGoalHandoffReviewRejection(ctx context.Context, handoffID string, goalID, receivedBy int64) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return GoalHandoff{}, err
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return GoalHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || handoff.ReceivedBy != receivedBy || receivedBy == 0 {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff review rejection receive tx: %w", err)
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	result, err := sqlcgen.New(tx).ReceiveGoalHandoffReviewRejection(ctx, sqlcgen.ReceiveGoalHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(now), Valid: true}, ID: handoffID, GoalID: goalID, ReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("receive goal handoff review rejection: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindReceived, "review rejection received", receivedBy, "", "", true, now); err != nil {
+		return GoalHandoff{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff review rejection receive: %w", err)
+	}
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+// CompleteGoalHandoffByReviewer closes a goal handoff after the recorded
+// reviewer accepts the received work.
+func (s *Store) CompleteGoalHandoffByReviewer(ctx context.Context, handoffID string, goalID, reviewerID int64, completeReport string) (GoalHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return GoalHandoff{}, err
+	}
+	if completeReportIsEmpty(completeReport) {
+		return GoalHandoff{}, ErrGoalHandoffReportEmpty
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return GoalHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrGoalHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	if handoff.ReviewReceivedAt == nil || handoff.CompletedReportAt != nil {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if handoff.ReviewReceivedBy != reviewerID {
+		return GoalHandoff{}, fmt.Errorf("%w: goal handoff reviewer %d is not recorded reviewer %d", ErrGoalHandoffReviewReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
+	}
+	// A delegated handoff closes only through approved FinalizeGoalReview.
+	if handoff.RequestedBy != 0 && handoff.ReceivedBy != 0 && handoff.RequestedBy != handoff.ReceivedBy {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff review completion tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	result, err := q.CompleteGoalHandoffByReviewer(ctx, sqlcgen.CompleteGoalHandoffByReviewerParams{
+		CompletedReportAt: sql.NullString{String: now, Valid: true},
+		CompleteReport:    sql.NullString{String: completeReport, Valid: true},
+		ID:                handoffID,
+		GoalID:            goalID,
+		ReviewReceivedBy:  sql.NullInt64{Int64: reviewerID, Valid: true},
+	})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("complete goal handoff by reviewer: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("complete goal handoff by reviewer rows affected: %w", err)
+	} else if affected == 0 {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", handoffID, HandoffEntryKindComplete, completeReport, reviewerID, "", "", true, nowTime); err != nil {
+		return GoalHandoff{}, fmt.Errorf("append goal handoff review completion entry: %w", err)
+	}
+	projectID, err := q.GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("find project for goal handoff review completion: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventHandoffReported,
+		Data: WakeupEvent{
+			WakeupID:       NewWakeupID(),
+			ProjectID:      projectID,
+			GoalID:         goalID,
+			HandoffID:      handoffID,
+			CompleteReport: completeReport,
+		},
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff review completion: %w", err)
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+// ReceiveGoalHandoffForGoal resolves receipt by the explicit pending
+// handoff. Multiple pending requests are rejected so receipt cannot be
+// assigned to the wrong delegation.
+func (s *Store) ReceiveGoalHandoffForGoal(ctx context.Context, goalID int64, receivedBy int64) (GoalHandoff, error) {
+	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("list pending goal handoffs: %w", err)
+	}
+	pending := make([]GoalHandoff, 0, len(handoffs))
+	for _, handoff := range handoffs {
+		if handoff.RequestedAt != nil && handoff.ReceivedAt == nil && handoff.RecoveredAt == nil {
+			pending = append(pending, handoff)
+		}
+	}
+	if len(pending) == 0 {
+		return GoalHandoff{}, fmt.Errorf("%w: goal %d", ErrGoalHandoffNotFound, goalID)
+	}
+	if len(pending) > 1 {
+		return GoalHandoff{}, fmt.Errorf("%w: goal %d has %d pending handoffs", ErrGoalHandoffAmbiguous, goalID, len(pending))
+	}
+	return s.ReceiveGoalHandoff(ctx, pending[0].ID, goalID, receivedBy)
+}
+
+// CompleteGoalHandoffForGoal finds the single requested, received, and
+// incomplete handoff for a goal and records its completion. Multiple
+// incomplete handoffs are rejected so completion cannot be assigned to the
+// wrong delegation.
+func (s *Store) CompleteGoalHandoffForGoal(ctx context.Context, goalID int64, completeReport string) (GoalHandoff, error) {
+	handoffs, err := s.ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("list incomplete goal handoffs: %w", err)
+	}
+	pending := make([]GoalHandoff, 0, len(handoffs))
+	for _, handoff := range handoffs {
+		if handoff.RequestedAt != nil && handoff.ReceivedAt != nil && handoff.CompletedReportAt == nil && handoff.RecoveredAt == nil {
+			pending = append(pending, handoff)
+		}
+	}
+	if len(pending) == 0 {
+		return GoalHandoff{}, fmt.Errorf("%w: goal %d", ErrGoalHandoffNotFound, goalID)
+	}
+	if len(pending) > 1 {
+		return GoalHandoff{}, fmt.Errorf("%w: goal %d has %d incomplete handoffs", ErrGoalHandoffAmbiguous, goalID, len(pending))
+	}
+	return s.CompleteGoalHandoff(ctx, pending[0].ID, goalID, completeReport)
+}
+
+// CompleteGoalHandoff records the completion report side of a handoff. It
+// only writes the completion timestamp and report and therefore preserves partial states.
+func (s *Store) CompleteGoalHandoff(ctx context.Context, handoffID string, goalID int64, completeReport string) (GoalHandoff, error) {
+	if completeReportIsEmpty(completeReport) {
+		return GoalHandoff{}, ErrGoalHandoffReportEmpty
+	}
+	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
+		return GoalHandoff{}, err
+	}
+	handoff, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	if handoff.RecoveredAt != nil {
+		return GoalHandoff{}, ErrGoalHandoffReviewState
+	}
+	if handoffIsDelegation(handoff.RequestedBy, handoff.ReceivedBy) && completeReport != goalHandoffReclaimedReport && completeReport != goalHandoffReleasedReport {
+		return GoalHandoff{}, fmt.Errorf("%w: complete the goal handoff through its recorded reviewer", ErrGoalHandoffReviewState)
+	}
+	nowTime := time.Now().UTC()
+	now := formatTimestamp(nowTime)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff completion tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	current, err := q.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
+		}
+		return GoalHandoff{}, fmt.Errorf("find goal handoff receiver: %w", err)
+	}
+	if current.GoalID != goalID {
+		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffGoalMismatch, handoffID)
+	}
+	if !current.ReceivedAt.Valid || strings.TrimSpace(current.ReceivedAt.String) == "" {
+		return GoalHandoff{}, fmt.Errorf("%w: handoff %q must be received before completion", ErrHandoffEntryParticipant, handoffID)
+	}
+	receivedBy := current.ReceivedBy
+	result, err := q.CompleteGoalHandoff(ctx, sqlcgen.CompleteGoalHandoffParams{
+		ID:                handoffID,
+		GoalID:            goalID,
+		CompletedReportAt: sql.NullString{String: now, Valid: true},
+		CompleteReport:    sql.NullString{String: completeReport, Valid: completeReport != ""},
+	})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("complete goal handoff: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("complete goal handoff rows affected: %w", err)
+	}
+	if n == 0 {
+		if handoff.CompletedReportAt != nil {
+			return GoalHandoff{}, fmt.Errorf("goal handoff %q is already reported; use another path to add a report after completion", handoffID)
+		}
+		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
+	}
+	authorID := int64(0)
+	if receivedBy.Valid {
+		authorID = receivedBy.Int64
+	}
+	if _, err := appendHandoffEntryTx(ctx, q, "goal_handoff_entries", handoffID, HandoffEntryKindComplete, completeReport, authorID, "", "", true, nowTime); err != nil {
+		return GoalHandoff{}, fmt.Errorf("append goal handoff complete entry: %w", err)
+	}
+	// Claim locks have no delegate report, so their completion is not reportable.
+	var event DecisionEvent
+	if handoffIsDelegation(handoff.RequestedBy, handoff.ReceivedBy) {
+		projectID, err := q.GetGoalProjectID(ctx, goalID)
+		if err != nil {
+			return GoalHandoff{}, fmt.Errorf("find project for goal handoff completion: %w", err)
+		}
+		event = DecisionEvent{
+			Name: EventHandoffReported,
+			Data: WakeupEvent{
+				WakeupID:       NewWakeupID(),
+				ProjectID:      projectID,
+				GoalID:         goalID,
+				HandoffID:      handoffID,
+				CompleteReport: completeReport,
+			},
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff completion: %w", err)
+	}
+	completed, err := s.GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		return GoalHandoff{}, err
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return completed, nil
+}
+
+func (s *Store) publishGoalHandoffReported(ctx context.Context, completed GoalHandoff) {
+	// Claim locks have no delegate report, so their completion is not reportable.
+	if !handoffIsDelegation(completed.RequestedBy, completed.ReceivedBy) {
+		return
+	}
+	goal, err := s.GetGoal(ctx, completed.GoalID)
+	if err != nil {
+		// Notification is best-effort; do not turn a successful completion into an error.
+		return
+	}
+	s.notify.publishEvent(Event{
+		Name: EventHandoffReported,
+		Data: WakeupEvent{
+			WakeupID:       NewWakeupID(),
+			ProjectID:      goal.ProjectID,
+			GoalID:         completed.GoalID,
+			HandoffID:      completed.ID,
+			CompleteReport: completed.CompleteReport,
+		},
+	})
+}
+
+// AmendGoalHandoffReport fills in or corrects the report on a handoff that is
+// already closed without changing when it was completed.
+func (s *Store) AmendGoalHandoffReport(ctx context.Context, handoffID string, goalID int64, completeReport string) (GoalHandoff, error) {
+	if completeReportIsEmpty(completeReport) {
+		return GoalHandoff{}, ErrGoalHandoffReportEmpty
+	}
+	if err := s.ensureGoalHandoffGoal(ctx, handoffID, goalID); err != nil {
+		return GoalHandoff{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("begin goal handoff amend tx: %w", err)
+	}
+	defer tx.Rollback()
+	current, err := sqlcgen.New(tx).GetGoalHandoff(ctx, handoffID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
+		}
+		return GoalHandoff{}, fmt.Errorf("find goal handoff receiver for amend: %w", err)
+	}
+	if current.GoalID != goalID {
+		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffGoalMismatch, handoffID)
+	}
+	receivedBy := current.ReceivedBy
+	result, err := sqlcgen.New(tx).AmendGoalHandoffReport(ctx, sqlcgen.AmendGoalHandoffReportParams{
+		ID: handoffID, GoalID: goalID, CompleteReport: sql.NullString{String: completeReport, Valid: true},
+	})
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("amend goal handoff report: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("amend goal handoff report rows affected: %w", err)
+	}
+	if n == 0 {
+		return GoalHandoff{}, fmt.Errorf("goal handoff %q is not yet completed; use atct_goal_handoff_complete", handoffID)
+	}
+	if !receivedBy.Valid || receivedBy.Int64 <= 0 {
+		return GoalHandoff{}, fmt.Errorf("%w: completed goal handoff has no received_by", ErrHandoffEntryParticipant)
+	}
+	if _, err := appendHandoffEntryTx(ctx, sqlcgen.New(tx), "goal_handoff_entries", handoffID, HandoffEntryKindCompleted, completeReport, receivedBy.Int64, "", "", true, time.Now().UTC()); err != nil {
+		return GoalHandoff{}, fmt.Errorf("append goal handoff amend entry: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return GoalHandoff{}, fmt.Errorf("commit goal handoff amend: %w", err)
+	}
+	return s.GetGoalHandoff(ctx, handoffID)
+}
+
+// GetGoalHandoff returns one handoff, including NULL timestamps as nil.
+func (s *Store) GetGoalHandoff(ctx context.Context, handoffID string) (GoalHandoff, error) {
+	row, err := sqlcgen.New(s.db).GetGoalHandoff(ctx, handoffID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return GoalHandoff{}, fmt.Errorf("%w: %s", ErrGoalHandoffNotFound, handoffID)
+	}
+	if err != nil {
+		return GoalHandoff{}, fmt.Errorf("get goal handoff %q: %w", handoffID, err)
+	}
+	return goalHandoffFromRow(row)
+}
+
+// ListGoalHandoffs returns all handoffs for a goal, including partial rows.
+func (s *Store) ListGoalHandoffs(ctx context.Context, goalID int64) ([]GoalHandoff, error) {
+	rows, err := sqlcgen.New(s.db).ListGoalHandoffs(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("list goal handoffs: %w", err)
+	}
+
+	handoffs := make([]GoalHandoff, 0, len(rows))
+	for _, row := range rows {
+		handoff, err := goalHandoffFromRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("parse goal handoff: %w", err)
+		}
+		handoffs = append(handoffs, handoff)
+	}
+	return handoffs, nil
+}
+
+// ListGoalSessions returns the identified sessions that received a handoff for a goal.
+func (s *Store) ListGoalSessions(ctx context.Context, goalID int64) ([]GoalSession, error) {
+	rows, err := sqlcgen.New(s.db).ListGoalSessionKeys(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("list goal sessions: %w", err)
+	}
+
+	sessions := make([]GoalSession, 0, len(rows))
+	for _, row := range rows {
+		sessions = append(sessions, GoalSession{
+			SessionKey:  row.SessionKey,
+			Role:        row.Role,
+			HandoffOpen: row.HandoffOpen != 0,
+		})
+	}
+	return sessions, nil
+}
+
+// ListOpenGoalHandoffs returns all incomplete goal handoffs with their full
+// review state.
+func (s *Store) ListOpenGoalHandoffs(ctx context.Context) (map[int64]*GoalHandoff, error) {
+	rows, err := sqlcgen.New(s.db).ListOpenGoalHandoffs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list open goal handoffs: %w", err)
+	}
+
+	handoffs := make(map[int64]*GoalHandoff, len(rows))
+	for _, row := range rows {
+		handoff, err := s.GetGoalHandoff(ctx, row.ID)
+		if err != nil {
+			return nil, fmt.Errorf("parse open goal handoff: %w", err)
+		}
+		handoffs[handoff.GoalID] = &handoff
+	}
+	return handoffs, nil
+}
+
+// RequestPlanHandoffReview records a plan submitted by the receiver of the
+// goal handoff. The open goal handoff remains the authorization for the
+// request, while the plan table owns the review lifecycle.
+func (s *Store) RequestPlanHandoffReview(ctx context.Context, handoffID string, goalID, requestedBy int64, reviewRequestReport string) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, requestedBy); err != nil {
+		return PlanHandoff{}, err
+	}
+	if completeReportIsEmpty(reviewRequestReport) {
+		return PlanHandoff{}, ErrPlanHandoffReviewReportEmpty
+	}
+	goalHandoff, err := s.openGoalHandoff(ctx, goalID)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("find live goal handoff for plan review: %w", err)
+	}
+	if goalHandoff == nil || goalHandoff.ReceivedBy == 0 || goalHandoff.ReceivedBy != requestedBy {
+		return PlanHandoff{}, fmt.Errorf("%w: plan review requester %d does not hold the goal handoff", ErrPlanHandoffReviewerMismatch, requestedBy)
+	}
+	goal, err := s.GetGoal(ctx, goalID)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("get goal for plan review: %w", err)
+	}
+	if completeReportIsEmpty(goal.Spec) || completeReportIsEmpty(goal.Plan) {
+		return PlanHandoff{}, ErrPlanHandoffGoalArtifactsEmpty
+	}
+	if err := checkSpecPlanNotReferenceOnly(goal.Spec, goal.Plan); err != nil {
+		return PlanHandoff{}, err
+	}
+
+	existing, err := s.GetPlanHandoff(ctx, handoffID)
+	if err == nil {
+		if existing.GoalID != goalID {
+			return PlanHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrPlanHandoffGoalMismatch, handoffID, existing.GoalID, goalID)
+		}
+		if existing.CompletedReportAt != nil {
+			return PlanHandoff{}, ErrPlanHandoffReviewState
+		}
+		if existing.ReviewRequestedAt != nil && existing.ReviewRejectedAt == nil {
+			return PlanHandoff{}, fmt.Errorf("%w: plan handoff review is already open", ErrPlanHandoffReviewState)
+		}
+	} else if !errors.Is(err, ErrPlanHandoffNotFound) {
+		return PlanHandoff{}, err
+	}
+
+	now := formatTimestamp(time.Now())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("begin plan handoff review request tx: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := sqlcgen.New(tx).RequestPlanHandoffReview(ctx, sqlcgen.RequestPlanHandoffReviewParams{
+		ID:                  handoffID,
+		GoalID:              goalID,
+		ReviewRequestedBy:   sql.NullInt64{Int64: requestedBy, Valid: true},
+		ReviewRequestedAt:   sql.NullString{String: now, Valid: true},
+		ReviewRequestReport: sql.NullString{String: reviewRequestReport, Valid: true},
+	})
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("request plan handoff review: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("request plan handoff review rows affected: %w", err)
+	} else if affected == 0 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if err := appendPlanHandoffEntryTx(ctx, sqlcgen.New(tx), handoffID, HandoffEntryKindReviewRequested, reviewRequestReport, requestedBy, now); err != nil {
+		return PlanHandoff{}, err
+	}
+	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("find project for plan handoff review request: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventPlanHandoffReviewRequest,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReviewerID: requestedBy, ReviewRequestReport: reviewRequestReport},
+	}
+	if err := tx.Commit(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("commit plan handoff review request: %w", err)
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetPlanHandoff(ctx, handoffID)
+}
+
+// ReceivePlanHandoffReview records receipt by the project claim holder for the
+// goal. A plan review does not create or change a task claim.
+func (s *Store) ReceivePlanHandoffReview(ctx context.Context, handoffID string, goalID, receivedBy int64) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return PlanHandoff{}, err
+	}
+	handoff, err := s.GetPlanHandoff(ctx, handoffID)
+	if err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return PlanHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrPlanHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	if handoff.ReviewRequestedAt == nil || handoff.ReviewReceivedAt != nil || handoff.CompletedReportAt != nil {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if err := s.requireProjectClaimForGoal(ctx, goalID, receivedBy); err != nil {
+		return PlanHandoff{}, fmt.Errorf("%w: %v", ErrPlanHandoffReviewerMismatch, err)
+	}
+
+	now := formatTimestamp(time.Now())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("begin plan handoff review receive tx: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := sqlcgen.New(tx).ReceivePlanHandoffReview(ctx, sqlcgen.ReceivePlanHandoffReviewParams{
+		ReviewReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true},
+		ReviewReceivedAt: sql.NullString{String: now, Valid: true},
+		ID:               handoffID,
+		GoalID:           goalID,
+	})
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("receive plan handoff review: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("receive plan handoff review rows affected: %w", err)
+	} else if affected == 0 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("find project for plan handoff review receive: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventPlanHandoffReviewReceive,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReviewerID: receivedBy},
+	}
+	if err := tx.Commit(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("commit plan handoff review receive: %w", err)
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetPlanHandoff(ctx, handoffID)
+}
+
+// RecoverPlanHandoff reopens a review receipt only when its recorded reviewer
+// is definitely stale. The current commander remains the only recovery actor.
+func (s *Store) RecoverPlanHandoff(ctx context.Context, handoffID string, goalID, callerID int64, reason string) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, callerID); err != nil {
+		return PlanHandoff{}, err
+	}
+	if err := s.requireProjectClaimForGoal(ctx, goalID, callerID); err != nil {
+		return PlanHandoff{}, fmt.Errorf("recover plan handoff requires the current commander: %w", err)
+	}
+	handoff, err := s.GetPlanHandoff(ctx, handoffID)
+	if err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.GoalID != goalID || handoff.ReviewReceivedAt == nil || handoff.ReviewReceivedBy == 0 || handoff.CompletedReportAt != nil {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if handoff.ReviewReceivedBy == callerID {
+		return PlanHandoff{}, fmt.Errorf("recover plan handoff cannot replace its current reviewer: %w", ErrPlanHandoffReviewerMismatch)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("begin plan handoff recovery: %w", err)
+	}
+	defer tx.Rollback()
+	q := sqlcgen.New(tx)
+	sessionProof, err := canRecoverSessionInTx(ctx, q, handoff.ReviewReceivedBy)
+	if err != nil {
+		return PlanHandoff{}, err
+	}
+	result, err := q.RecoverPlanHandoffReview(ctx, sqlcgen.RecoverPlanHandoffReviewParams{
+		ID: handoffID, GoalID: goalID, ReviewReceivedBy: sql.NullInt64{Int64: handoff.ReviewReceivedBy, Valid: true}, Pid: sessionProof.PID, StartedAt: sessionProof.StartedAt,
+	})
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("clear stale plan reviewer receipt: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if err := tx.Commit(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("commit plan handoff recovery: %w", err)
+	}
+	return s.GetPlanHandoff(ctx, handoffID)
+}
+
+type recoverySessionProof struct {
+	RecoveryProof
+	PID       int64
+	StartedAt string
+}
+
+func canRecoverSessionInTx(ctx context.Context, q *sqlcgen.Queries, sessionID int64) (recoverySessionProof, error) {
+	if sessionID <= 0 {
+		return recoverySessionProof{}, fmt.Errorf("session id is required: %w", ErrSessionRecoveryNotProven)
+	}
+	row, err := q.GetAgentSessionRecovery(ctx, sessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return recoverySessionProof{}, fmt.Errorf("agent session %d is not registered: %w", sessionID, ErrAgentSessionNotRegistered)
+	}
+	if err != nil {
+		return recoverySessionProof{}, fmt.Errorf("find agent session %d for recovery: %w", sessionID, err)
+	}
+	if agentSessionHasDiscardMetadata(row) {
+		if row.DiscardedAt.Valid && row.DiscardedBy.Valid && row.DiscardedBy.Int64 > 0 && row.DiscardedDecisionID.Valid && row.DiscardedDecisionID.Int64 > 0 && row.DiscardReason != "" {
+			return recoverySessionProof{RecoveryProof: RecoveryProof{SessionID: sessionID, Kind: RecoveryProofSessionDiscard, DiscardDecisionID: row.DiscardedDecisionID.Int64}, PID: row.Pid, StartedAt: row.StartedAt}, nil
+		}
+		return recoverySessionProof{}, fmt.Errorf("agent session %d has an incomplete discard record: %w", sessionID, ErrSessionRecoveryNotProven)
+	}
+	// The heartbeat is the only liveness signal. The recorded pid stopped being
+	// evidence when the daemon began serving every session over HTTP: the pid it
+	// writes is its own, so the operating system answers "alive" for as long as
+	// ATCT runs, and a session registered that way could never be proven stale
+	// however long ago it stopped. A session with no heartbeat at all predates
+	// the lease; registration has written one ever since.
+	if agentSessionLease(ctx, q, sessionID, time.Now()) == leaseHeld {
+		return recoverySessionProof{}, fmt.Errorf("agent session %d is still holding its heartbeat lease: %w", sessionID, ErrSessionRecoveryNotProven)
+	}
+	return recoverySessionProof{RecoveryProof: RecoveryProof{SessionID: sessionID, Kind: RecoveryProofLeaseLapsed}, PID: row.Pid, StartedAt: row.StartedAt}, nil
+}
+
+// RejectPlanHandoffReview clears the project review receipt while retaining the
+// plan row for another review cycle.
+func (s *Store) RejectPlanHandoffReview(ctx context.Context, handoffID string, goalID, reviewerID int64, rejectReport string) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return PlanHandoff{}, err
+	}
+	if completeReportIsEmpty(rejectReport) {
+		return PlanHandoff{}, ErrPlanHandoffReviewReportEmpty
+	}
+	handoff, err := s.GetPlanHandoff(ctx, handoffID)
+	if err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return PlanHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrPlanHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	if handoff.ReviewReceivedAt == nil || handoff.CompletedReportAt != nil {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if handoff.ReviewReceivedBy != reviewerID {
+		return PlanHandoff{}, fmt.Errorf("%w: plan handoff reviewer %d is not recorded reviewer %d", ErrPlanHandoffReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
+	}
+
+	now := formatTimestamp(time.Now())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("begin plan handoff review rejection tx: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := sqlcgen.New(tx).RejectPlanHandoffReview(ctx, sqlcgen.RejectPlanHandoffReviewParams{
+		ReviewRejectedAt:   sql.NullString{String: now, Valid: true},
+		ReviewRejectReport: sql.NullString{String: rejectReport, Valid: true},
+		ID:                 handoffID,
+		GoalID:             goalID,
+	})
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("reject plan handoff review: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("reject plan handoff review rows affected: %w", err)
+	} else if affected == 0 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if err := appendPlanHandoffEntryTx(ctx, sqlcgen.New(tx), handoffID, HandoffEntryKindReviewRejected, rejectReport, reviewerID, now); err != nil {
+		return PlanHandoff{}, err
+	}
+	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("find project for plan handoff review rejection: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventPlanHandoffReviewReject,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReviewerID: reviewerID, ReviewRejectReport: rejectReport},
+	}
+	if err := tx.Commit(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("commit plan handoff review rejection: %w", err)
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetPlanHandoff(ctx, handoffID)
+}
+
+func (s *Store) ReceivePlanHandoffReviewRejection(ctx context.Context, handoffID string, goalID, receivedBy int64) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, receivedBy); err != nil {
+		return PlanHandoff{}, err
+	}
+	handoff, err := s.GetPlanHandoff(ctx, handoffID)
+	if err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return PlanHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrPlanHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	// Who may take it is decided by the statement below, which accepts the
+	// submitter or whoever holds the goal now. Repeating the submitter check
+	// here would put the old rule back and strand the rejection again.
+	if handoff.ReviewRejectedAt == nil || handoff.CompletedReportAt != nil || receivedBy == 0 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	result, err := sqlcgen.New(s.db).ReceivePlanHandoffReviewRejection(ctx, sqlcgen.ReceivePlanHandoffReviewRejectionParams{ReviewRejectionReceivedBy: sql.NullInt64{Int64: receivedBy, Valid: true}, ReviewRejectionReceivedAt: sql.NullString{String: formatTimestamp(time.Now()), Valid: true}, ID: handoffID, GoalID: goalID})
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("receive plan handoff review rejection: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	return s.GetPlanHandoff(ctx, handoffID)
+}
+
+// CompletePlanHandoff closes a plan review after the recorded project
+// reviewer accepts it.
+func (s *Store) CompletePlanHandoff(ctx context.Context, handoffID string, goalID, reviewerID int64, completeReport string) (PlanHandoff, error) {
+	if err := s.requireUndiscardedSession(ctx, reviewerID); err != nil {
+		return PlanHandoff{}, err
+	}
+	if completeReportIsEmpty(completeReport) {
+		return PlanHandoff{}, ErrPlanHandoffReviewReportEmpty
+	}
+	handoff, err := s.GetPlanHandoff(ctx, handoffID)
+	if err != nil {
+		return PlanHandoff{}, err
+	}
+	if handoff.GoalID != goalID {
+		return PlanHandoff{}, fmt.Errorf("%w: %q belongs to goal %d, not %d", ErrPlanHandoffGoalMismatch, handoffID, handoff.GoalID, goalID)
+	}
+	if handoff.ReviewReceivedAt == nil || handoff.CompletedReportAt != nil {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if handoff.ReviewReceivedBy != reviewerID {
+		return PlanHandoff{}, fmt.Errorf("%w: plan handoff reviewer %d is not recorded reviewer %d", ErrPlanHandoffReviewerMismatch, reviewerID, handoff.ReviewReceivedBy)
+	}
+
+	now := formatTimestamp(time.Now())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("begin plan handoff review completion tx: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := sqlcgen.New(tx).CompletePlanHandoff(ctx, sqlcgen.CompletePlanHandoffParams{
+		CompletedReportAt: sql.NullString{String: now, Valid: true},
+		CompleteReport:    sql.NullString{String: completeReport, Valid: true},
+		ID:                handoffID,
+		GoalID:            goalID,
+		ReviewReceivedBy:  sql.NullInt64{Int64: reviewerID, Valid: true},
+	})
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("complete plan handoff: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("complete plan handoff rows affected: %w", err)
+	} else if affected == 0 {
+		return PlanHandoff{}, ErrPlanHandoffReviewState
+	}
+	if _, err := s.createTaskCreateHandoffTx(ctx, tx, handoff.GoalID, reviewerID); err != nil {
+		return PlanHandoff{}, fmt.Errorf("create task-create handoff: %w", err)
+	}
+	projectID, err := sqlcgen.New(tx).GetGoalProjectID(ctx, goalID)
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("find project for plan handoff completion: %w", err)
+	}
+	event := DecisionEvent{
+		Name: EventPlanHandoffComplete,
+		Data: HandoffReviewEvent{ProjectID: projectID, GoalID: goalID, HandoffID: handoffID, ReviewerID: reviewerID, CompleteReport: completeReport},
+	}
+	if err := tx.Commit(); err != nil {
+		return PlanHandoff{}, fmt.Errorf("commit plan handoff review completion: %w", err)
+	}
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return s.GetPlanHandoff(ctx, handoffID)
+}
+
+// GetPlanHandoff returns one plan review handoff, including NULL timestamps as
+// nil.
+func (s *Store) GetPlanHandoff(ctx context.Context, handoffID string) (PlanHandoff, error) {
+	row, err := sqlcgen.New(s.db).GetPlanHandoff(ctx, handoffID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PlanHandoff{}, fmt.Errorf("%w: %s", ErrPlanHandoffNotFound, handoffID)
+	}
+	if err != nil {
+		return PlanHandoff{}, fmt.Errorf("get plan handoff %q: %w", handoffID, err)
+	}
+	return planHandoffFromRow(row)
+}
+
+// ListPlanHandoffs returns all plan review handoffs for a goal.
+func (s *Store) ListPlanHandoffs(ctx context.Context, goalID int64) ([]PlanHandoff, error) {
+	rows, err := sqlcgen.New(s.db).ListPlanHandoffs(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("list plan handoffs: %w", err)
+	}
+	handoffs := make([]PlanHandoff, 0, len(rows))
+	for _, row := range rows {
+		handoff, err := planHandoffFromRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("parse plan handoff: %w", err)
+		}
+		handoffs = append(handoffs, handoff)
+	}
+	return handoffs, nil
+}

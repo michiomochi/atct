@@ -1,0 +1,350 @@
+# ATCT
+
+> **Archived experiment.** This is a snapshot of a personal side project, published as a reference
+> for an article. It is not maintained, and issues and pull requests are not accepted.
+>
+> - **What it was:** a local daemon, web dashboard and MCP server that coordinates coding agents
+>   (Claude Code and Codex). A human sets a goal, a commander agent splits it, executor agents do the
+>   work, and any question that needs a human is parked on the dashboard while the agents keep going.
+>   The original README follows below.
+> - **What changed for publication:** the git history was dropped, so this is a single commit. Home
+>   directory paths, a GitHub organization name and the name of a private project were replaced with
+>   neutral placeholders (`/Users/me`, `example-org`, `sample-app`). Nothing else was changed.
+> - **Running it:** the install commands below are those of the original project, and no release binaries exist for this archive. Build from source as
+>   described in [CONTRIBUTING.md](CONTRIBUTING.md) (`pnpm build` in `web/`, then `go build ./...`).
+>   The Go module path is still `github.com/michiomochi/atct-archive`.
+> - **License:** AGPL-3.0, unchanged from the original (see [LICENSE](LICENSE)). The contributor
+>   agreement in CONTRIBUTING.md no longer applies, because contributions are not accepted.
+
+**The air traffic control tower for your coding agents.**
+
+A controller tracks many aircraft at once without flying any of them. When an aircraft needs a
+decision, the controller issues a *clearance*; until it arrives, the aircraft *holds short* — it
+stops before the runway and waits, without anyone taking the controls.
+
+ATCT is that tower for coding agents. You set a goal. A commander hands it to an executor, which
+plans, implements and verifies it. When an agent reaches something it should not decide alone, it
+parks the question for you and keeps going where it can. You answer from one dashboard. The agent picks the answer up and continues.
+When the goal is met, it comes back to you for sign-off.
+
+---
+
+## Install
+
+```bash
+brew install --cask michiomochi/tap/atct
+
+claude plugin marketplace add michiomochi/atct-archive
+claude plugin install atct@atct
+```
+
+The Homebrew Cask installs both `atct` and `atct-mcp`. The plugin supplies the MCP connection,
+hooks, and skills; it does not install or update the CLI.
+
+Restart Claude Code once — or run `/reload-plugins` — so the new MCP server is picked up.
+
+Optional, and not a dependency of atct: to polish the Japanese ATCT records before they are
+saved, install the yomiyasu plugin.
+
+```bash
+claude plugin marketplace add nanaism/yomiyasu
+claude plugin install yomiyasu@yomiyasu
+```
+
+macOS and Linux, on amd64 and arm64. Windows is not supported: the daemon talks over a Unix
+domain socket.
+
+## Getting started
+
+After installing the atct plugin, open Claude Code or Codex in the repository you want to manage
+and enter `/atct:start` in the agent chat — not in a terminal. If it is not registered yet, the
+repository is registered on the spot. Running `/atct:start` in a repository you did not intend to
+manage also places that repository under atct management.
+
+Open <http://127.0.0.1:8787/> and create your first goal there — **everything a human does happens
+on the dashboard.** The daemon starts on its own the first time anything needs it.
+
+If you prefer to register a repository manually, `atct project add` remains available:
+
+```bash
+cd /path/to/your/repo
+atct project add
+```
+
+To stop tracking a project without deleting it, run `atct project archive <name>` (or use the
+**Projects** section of the dashboard). Its goals leave the lists, waiting answers, hooks and
+watches, and changes to them are refused until `atct project unarchive <name>` brings it back.
+
+A goal is one field. Write what you want in as much or as little detail as you like; the
+first line is what lists and links show, and anything after it is the detail.
+
+From then on, opening Claude Code in a registered repository is enough. A session hook hands
+the agent the active goals — their `goal_id`, what each one says, the tasks under them, and any
+answer waiting to be picked up — so it knows what it is working on before you type anything.
+**Repositories you never registered are untouched**: the hook stays silent, so unrelated work
+does not pay for a ceremony it did not ask for.
+
+`atct daemon start` and `atct daemon stop` are there if you ever need to restart it by hand.
+
+### Codex startup
+
+Codex startup monitoring is an explicit opt-in. Run this once:
+
+```bash
+atct codex shim install
+```
+
+This configures `~/.atct/bin/codex` and prepends that directory to the matching shell profile's
+`PATH`. Open a new terminal, or restart the current terminal, so the updated `PATH` is active.
+
+After that, the shim behaves as follows:
+
+- In an ATCT-registered project, running `codex` with no arguments automatically starts a
+  commander-role monitor when Codex itself starts.
+- `codex` with any argument passes through to the real Codex without starting a monitor. This
+  includes `codex exec` and `codex -m ...`.
+- In an unregistered project, Codex passes through to the real Codex without starting a monitor.
+
+Automatic monitoring starts only when Codex itself starts; it cannot be retrofitted onto an
+existing session. `atct:start` is not a monitor-start trigger.
+
+For any monitored interactive launch, use the generic token-bound command:
+
+```bash
+atct codex monitor -- <args>
+atct codex monitor stop
+```
+
+The wrapper creates a monitor token and follows the assignment derived by the server after session
+identification and claim or handoff receipt. `--role`, `--project`, `--goal`, `--task`, and `--scope`
+are not monitor options. A running normal Codex process cannot be retrofitted; use a fresh monitored
+process.
+
+For a monitored executor, the commander requests the goal handoff first, then runs
+`atct codex monitor -- <codex args>` inside a workspace to start a fresh executor session. A plain
+start bypasses the monitor. The new executor
+then calls `atct_goal_handoff_receive` with its SessionStart `session_key` (and
+`monitor_token`, when emitted), and `atct_role`.
+
+Put a literal Codex argument such as `stop` after `--` so it is not interpreted as the monitor's
+stop command.
+
+### Monitor liveness and recovery
+
+Eligible goal-scoped executor monitors run an independent one-minute
+liveness tick. The tick is based on the last successful scoped reconciliation, so it can emit a
+bounded `atct monitor liveness:` recheck line even while an SSE connection is quiet. Project-wide
+commander monitors, malformed or unscoped selectors, and scopes with an open human decision do not
+receive a prompt. A transient snapshot, reconciliation, SSE, or daemon failure stays in the watch
+loop and reconnects with bounded backoff; it is not a task or monitor terminal state.
+
+A liveness line is a recheck signal, not authority: it does not approve a human decision, cross a
+scope boundary, commit work, or create a task. An executor has its plan accepted before it
+implements, keeps an open human decision parked, works within its goal, commits the goal's work, and
+requests the goal review.
+
+To reproduce the GREEN documentation check, use at least five fresh contexts with the same
+time/sunk-cost/authority pressure scenario. Preserve each complete raw response and provenance, then
+score every response against the generic token-bound command with no role or scope selectors,
+record-first handoff ordering,
+`atct codex monitor -- <codex args>` inside a workspace to start a fresh executor session, the executor's identify → receive(goal
+only) → role sequence, and no retrofit. Read every response manually and retain the per-criterion
+scores; a valid monitor-wrapper command is required in every passing response.
+
+## Setting a goal is the approval
+
+An active goal is permission to coordinate work. The executor designs the goal, implements it, and reports it
+(it does not create tasks) — it does not come back for sign-off on the plan, and it does not
+stop between steps. Your attention goes to
+the decisions it parks and to the final approval, not to granting permission at every step.
+
+It stops before anything that cannot be undone: rewriting history, discarding uncommitted work,
+deleting files, or publishing off the machine. The test is whether **you can get the previous
+state back** — a commit is undoable, a force push over work that exists nowhere else is not.
+
+Say `/atct:start` to hand a session that responsibility explicitly. Whoever runs it owns what
+ATCT says about this repository: every claim, every completed task, every parked decision.
+
+Your side of it is two things: answer the decisions that are parked, and approve or send back the
+completion report when a goal claims to be finished. Everything else runs without you.
+
+## Your answer reaches a session that already moved on
+
+Agents stop when a turn ends. Polling does not help — polling is a tool call, so it ends with
+the turn. That is the gap where an answer normally goes unread: you reply, and nobody is
+listening any more.
+
+ATCT closes it from the outside. When a session is about to finish and an answer is waiting,
+a stop hook hands it back with the `decision_id` to pick up, and the work you were blocking
+continues. You do not have to time your reply to when an agent happens to be looking.
+
+## Starting work while you sleep
+
+The stop hook only reaches a session that is still open. To pick work up from nothing —
+after you answered overnight, or after you added a goal and closed the laptop — ask ATCT
+whether there is anything to do:
+
+```bash
+atct context --check    # exit 0: there is work. exit 1: nothing to do
+```
+
+It prints nothing, so it composes with anything that runs on a schedule:
+
+```bash
+# every 15 minutes, start a session only when there is something to start it for
+*/15 * * * * cd /path/to/repo && atct context --check && claude -p "/atct:start"
+```
+
+Work means an unapplied answer, an unclaimed task, or an active goal no executor holds. **A task someone is already working on does not count** — waking a second session for it
+gets the same work done twice.
+
+For harnesses without a stop hook, such as Codex, this is the whole mechanism rather than a
+supplement to one.
+
+---
+
+## The problem
+
+Running several coding agents at once is now normal. Keeping track of them is not.
+
+What you need to know is narrow: **which tasks are in flight, which ones are waiting on a decision
+from me, and what is queued next.** What you get instead is a row of terminal panes, each holding a
+conversation you would have to read to find out.
+
+The gap is more fundamental than a missing dashboard:
+
+- **Agent runtimes do not expose task state.** Claude Code's todo list has exactly three statuses —
+  `pending`, `in_progress`, `completed`. None of them means "waiting on a human". Session
+  transcripts carry no stable field for the current task, why a run stopped, or what it intends to
+  do next. Codex is the same. Task state cannot be recovered by watching agents, however closely you
+  watch them.
+- **Approval workflows only handle decisions someone anticipated.** Jira Service Management, Asana
+  approvals, and every BPM engine model approval steps configured by an administrator ahead of time.
+  An agent that runs into a real design question mid-implementation cannot mint a new one with its
+  own options.
+- **Nothing delivers an answer back into a running session.** Tools in this space route around the
+  problem rather than solve it — the closest one spawns a fresh one-shot process and files its
+  output as a reply.
+
+So decisions end up where nobody can see them: inside one agent's conversation, in one pane, on a
+screen you happen not to be looking at. Work stalls and nothing surfaces it.
+
+## What ATCT does
+
+**Decisions are first-class objects, not messages in a transcript.** An agent creates one during a
+run, with its own question and its own options, and hands it to a store that outlives the session
+that created it.
+
+**Waiting is derived, never stored.** A task is waiting on you precisely when it has an open
+decision attached. There is no separate status to fall out of sync, so the board cannot claim a task
+is blocked when nothing blocks it, or show one running while a question sits unanswered.
+
+**An answer is not finished until it lands.** Decisions move through three states:
+
+```
+open ──(you answer)──> answered ──(the agent picks it up)──> applied
+```
+
+You having answered and the agent having received that answer are different facts. If a session dies
+between them, the decision stays at `answered` and is visible as such, instead of looking handled
+while the work quietly stops.
+
+**One dashboard.** Every unanswered decision across every project lands in the same list, including
+"this goal looks complete, approve it?". Watching that one list is enough to never miss one.
+
+**Agents keep working.** A parked decision blocks one task, not the goal. The agent moves to
+whatever else is ready and comes back when you answer.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+  CC[Claude Code] --> SHIM
+  CX[Codex] --> SHIM
+  CU[Cursor / any MCP client] --> SHIM
+  SHIM[atct-mcp<br/>stdio shim] -->|unix socket| D[atct daemon]
+  D --> DB[(SQLite)]
+  D -->|HTTP + SSE| UI[Web UI<br/>dashboard / goals]
+  H((You)) --> UI
+```
+
+Agents reach ATCT over MCP, so anything that speaks MCP works — the Claude Code plugin is a
+convenience, not the interface. For other harnesses, point them at `atct-mcp` and you have the same
+eight tools. Everything runs on your machine: two binaries, a SQLite file, and a browser tab. No
+account, no server, no data leaving the host.
+
+ATCT does not start, stop, or supervise agents. It holds the tasks and the decisions. How you run
+agents stays your business.
+
+## Concepts
+
+| | |
+|---|---|
+| **Project** | A project. Derived from the working directory, so agents never have to name it |
+| **Goal** | What you want, in one field. Active means agents may work on it |
+| **Task** | A unit of work recorded under a goal. A decision attaches to one |
+| **Commander / executor** | The commander triages, reviews and talks to you; the executor holds the goal handoff and does the work. One goal has one executor |
+| **Decision** | A question an agent cannot settle alone, with options it wrote itself |
+
+A goal is `active`, `done`, or `dropped`. **A goal is active the moment it is created.** A goal
+you no longer want is withdrawn with a reason, from its own page; that closes its open decisions
+and its unfinished tasks along with it.
+
+Every option carries a `consequence` — what happens if you pick it. You should be able to decide
+without going back to ask what the choice actually means.
+
+One goal has one executor at a time. The goal handoff is received exclusively, so two agents never
+hold the same goal.
+
+## The screens
+
+- **Dashboard** — every unanswered decision across every project, then the goals themselves
+  grouped by project. The one screen that matters.
+- **Goal detail** — what is running now, what needs a decision, what is queued next, the
+  completion report when there is one, and the controls for withdrawing the goal.
+- **Task detail** — the task, its answer history, and the commits it produced, with the diff
+  of each one readable in place.
+
+Decisions are answered where they appear: the question, the options and their consequences, and
+a free-text field for answers that are not on the list.
+
+## What ATCT is not
+
+- Not a dependency graph — that is [Beads](https://github.com/gastownhall/beads)' job
+- Not a general agent multiplexer — its explicit Codex monitor is only for the command documented above
+- Not token and cost observability — that is Langfuse and AgentOps' job
+- Not a general blocker tracker; the only thing ATCT waits on is a human decision
+
+ATCT holds tasks and the decisions attached to them. That is the whole product.
+
+## Design
+
+The design is written up in full:
+
+- [`doc/specs/2026-08-15-atct-design.md`](doc/specs/2026-08-15-atct-design.md) — data model, state
+  machine and invariants, MCP contract, topology
+- [`doc/plans/2026-08-15-atct-core.md`](doc/plans/2026-08-15-atct-core.md) — the implementation,
+  written test-first, task by task
+
+Requires Go 1.26+, plus Node 22.12+ and pnpm. The web assets are built, not committed, and the
+daemon embeds them, so a build needs both toolchains.
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md). Open an issue before writing anything larger than a bug
+fix — design decisions follow the spec, and a change that contradicts it needs the spec updated
+first.
+
+Contributions require signing a CLA. It grants permission, it does not transfer copyright; the
+reasoning is in CONTRIBUTING.md.
+
+## License
+
+[AGPL-3.0](LICENSE).
+
+Running ATCT — modified or not, personally or across your company — carries no obligations. The
+copyleft applies if you modify it and serve it to others over a network.
+
+**Using ATCT does not put your code under AGPL.** It runs as its own process and agents reach it
+over MCP, which is inter-process communication, not linking. Your agents, your applications, and
+everything else on your machine keep whatever license they already had.

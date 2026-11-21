@@ -1,0 +1,639 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/michiomochi/atct-archive/internal/domain"
+	"github.com/michiomochi/atct-archive/internal/store/sqlcgen"
+)
+
+var (
+	ErrDecisionNotFound       = errors.New("decision not found")
+	ErrDecisionNotOpen        = errors.New("decision is not open")
+	ErrInvalidDecisionDefault = errors.New("invalid decision default")
+	ErrTaskHasOpenDecision    = errors.New("task has an open decision")
+	ErrGoalHasOpenDecision    = errors.New("goal has an open decision")
+)
+
+type AskInput struct {
+	GoalID         int64
+	TaskID         int64
+	Kind           domain.DecisionKind
+	Question       string
+	Options        []domain.Option
+	DefaultOption  string
+	DefaultAfterMs *int64
+	AgentSessionID int64
+}
+
+func (s *Store) AskDecision(ctx context.Context, in AskInput) (domain.Decision, error) {
+	if err := validateDecisionDefault(in.Options, in.DefaultOption, in.DefaultAfterMs); err != nil {
+		return domain.Decision{}, err
+	}
+	if in.Options == nil {
+		in.Options = []domain.Option{}
+	}
+	raw, err := json.Marshal(in.Options)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("marshal options: %w", err)
+	}
+
+	d := domain.Decision{
+		GoalID:         in.GoalID,
+		TaskID:         in.TaskID,
+		Kind:           in.Kind,
+		Question:       in.Question,
+		Options:        in.Options,
+		DefaultOption:  in.DefaultOption,
+		Status:         domain.DecisionOpen,
+		AgentSessionID: in.AgentSessionID,
+		CreatedAt:      time.Now().UTC(),
+	}
+	if in.DefaultAfterMs != nil {
+		after := *in.DefaultAfterMs
+		d.DefaultAfterMs = &after
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("begin decision creation tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := decisionQueries(s).WithTx(tx)
+	params := sqlcgen.CreateDecisionParams{
+		GoalID:         d.GoalID,
+		TaskID:         sql.NullInt64{Int64: in.TaskID, Valid: in.TaskID != 0},
+		Kind:           string(d.Kind),
+		Question:       d.Question,
+		Options:        string(raw),
+		Status:         string(d.Status),
+		DefaultOption:  d.DefaultOption,
+		AgentSessionID: d.AgentSessionID,
+		CreatedAt:      d.CreatedAt.Format(time.RFC3339),
+	}
+	if in.DefaultAfterMs != nil {
+		params.DefaultAfterMs = sql.NullInt64{Int64: *in.DefaultAfterMs, Valid: true}
+	}
+	id, err := q.CreateDecision(ctx, params)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("insert decision: %w", err)
+	}
+	d.ID = id
+	event := DecisionEvent{Name: "decision.created", Data: d, OccurredAt: d.CreatedAt}
+	if err := tx.Commit(); err != nil {
+		return domain.Decision{}, fmt.Errorf("commit decision creation: %w", err)
+	}
+	s.notify.publish(d.ID)
+	s.notify.publishAll()
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return d, nil
+}
+
+func validateDecisionDefault(options []domain.Option, defaultOption string, defaultAfterMs *int64) error {
+	if defaultOption == "" && defaultAfterMs == nil {
+		return nil
+	}
+	if defaultOption == "" {
+		return fmt.Errorf("%w: default_option is required", ErrInvalidDecisionDefault)
+	}
+	if defaultAfterMs != nil && *defaultAfterMs < 0 {
+		return fmt.Errorf("%w: default_after_ms must not be negative", ErrInvalidDecisionDefault)
+	}
+	for _, option := range options {
+		if option.Label == defaultOption {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: default_option %q is not one of the option labels", ErrInvalidDecisionDefault, defaultOption)
+}
+
+type decisionRow struct {
+	ID               int64
+	GoalID           int64
+	TaskID           sql.NullInt64
+	Kind             string
+	Question         string
+	Options          string
+	Status           string
+	DefaultOption    string
+	DefaultAfterMs   sql.NullInt64
+	DefaultAppliedAt sql.NullString
+	AnswerLabel      string
+	AnswerText       string
+	AnsweredAt       sql.NullString
+	AppliedAt        sql.NullString
+	AgentSessionID   int64
+	CreatedAt        string
+	AnsweredVia      string
+	AnswerQuote      string
+	AnswerEvidence   string
+}
+
+func decisionFromRow(row decisionRow) (domain.Decision, error) {
+	d := domain.Decision{
+		ID:             row.ID,
+		GoalID:         row.GoalID,
+		TaskID:         row.TaskID.Int64,
+		Kind:           domain.DecisionKind(row.Kind),
+		Question:       row.Question,
+		Status:         domain.DecisionStatus(row.Status),
+		DefaultOption:  row.DefaultOption,
+		AnswerLabel:    row.AnswerLabel,
+		AnswerText:     row.AnswerText,
+		AnsweredVia:    row.AnsweredVia,
+		AnswerQuote:    row.AnswerQuote,
+		AnswerEvidence: row.AnswerEvidence,
+		AgentSessionID: row.AgentSessionID,
+		CreatedAt:      time.Time{},
+	}
+	if row.DefaultAfterMs.Valid {
+		after := row.DefaultAfterMs.Int64
+		d.DefaultAfterMs = &after
+	}
+	if err := json.Unmarshal([]byte(row.Options), &d.Options); err != nil {
+		return domain.Decision{}, fmt.Errorf("unmarshal options: %w", err)
+	}
+	var err error
+	if d.CreatedAt, err = time.Parse(time.RFC3339, row.CreatedAt); err != nil {
+		return domain.Decision{}, fmt.Errorf("parse created_at: %w", err)
+	}
+	if row.AnsweredAt.Valid {
+		t, err := time.Parse(time.RFC3339, row.AnsweredAt.String)
+		if err != nil {
+			return domain.Decision{}, fmt.Errorf("parse answered_at: %w", err)
+		}
+		d.AnsweredAt = &t
+	}
+	if row.AppliedAt.Valid {
+		t, err := time.Parse(time.RFC3339, row.AppliedAt.String)
+		if err != nil {
+			return domain.Decision{}, fmt.Errorf("parse applied_at: %w", err)
+		}
+		d.AppliedAt = &t
+	}
+	if row.DefaultAppliedAt.Valid {
+		t, err := time.Parse(time.RFC3339, row.DefaultAppliedAt.String)
+		if err != nil {
+			return domain.Decision{}, fmt.Errorf("parse default_applied_at: %w", err)
+		}
+		d.DefaultAppliedAt = &t
+	}
+	return d, nil
+}
+
+func convertDecisionRows[T any](rows []T, convert func(T) decisionRow) ([]domain.Decision, error) {
+	var out []domain.Decision
+	for _, row := range rows {
+		d, err := decisionFromRow(convert(row))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+// decisionRowFromSQLC maps the generated Decision model onto decisionRow. Every
+// decision query selects the full row, so they all share this mapping.
+func decisionRowFromSQLC(row sqlcgen.Decision) decisionRow {
+	return decisionRow{
+		ID:               row.ID,
+		GoalID:           row.GoalID,
+		TaskID:           row.TaskID,
+		Kind:             row.Kind,
+		Question:         row.Question,
+		Options:          row.Options,
+		Status:           row.Status,
+		DefaultOption:    row.DefaultOption,
+		DefaultAfterMs:   row.DefaultAfterMs,
+		DefaultAppliedAt: row.DefaultAppliedAt,
+		AnswerLabel:      row.AnswerLabel,
+		AnswerText:       row.AnswerText,
+		AnsweredAt:       row.AnsweredAt,
+		AppliedAt:        row.AppliedAt,
+		AgentSessionID:   row.AgentSessionID,
+		CreatedAt:        row.CreatedAt,
+		AnsweredVia:      row.AnsweredVia,
+		AnswerQuote:      row.AnswerQuote,
+		AnswerEvidence:   row.AnswerEvidence,
+	}
+}
+
+func decisionQueries(s *Store) *sqlcgen.Queries {
+	return sqlcgen.New(s.db)
+}
+
+func (s *Store) GetDecision(ctx context.Context, id int64) (domain.Decision, error) {
+	row, err := decisionQueries(s).GetDecision(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Decision{}, fmt.Errorf("%w: %d", ErrDecisionNotFound, id)
+	}
+	if err != nil {
+		return domain.Decision{}, err
+	}
+	return decisionFromRow(decisionRowFromSQLC(row))
+}
+
+func (s *Store) ListOpenDecisions(ctx context.Context, goalID int64) ([]domain.Decision, error) {
+	rows, err := decisionQueries(s).ListOpenDecisions(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("query open decisions: %w", err)
+	}
+	return convertDecisionRows(rows, decisionRowFromSQLC)
+}
+
+// ListDecisionsForGoal returns every decision recorded for a goal, regardless
+// of its current status, in stable ID order for canonical reconciliation.
+func (s *Store) ListDecisionsForGoal(ctx context.Context, goalID int64) ([]domain.Decision, error) {
+	rows, err := decisionQueries(s).ListDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("query decisions for goal: %w", err)
+	}
+	return convertDecisionRows(rows, decisionRowFromSQLC)
+}
+
+func (s *Store) ListAllOpenDecisions(ctx context.Context) ([]domain.Decision, error) {
+	rows, err := decisionQueries(s).ListAllOpenDecisions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("query all open decisions: %w", err)
+	}
+	return convertDecisionRows(rows, decisionRowFromSQLC)
+}
+
+type AnswerInput struct {
+	DecisionID  int64
+	AnswerLabel string
+	AnswerText  string
+}
+
+// AnswerSource records where an answer came from. The zero value is a dashboard
+// answer, which leaves the source columns empty.
+type AnswerSource struct {
+	Via      string
+	Quote    string
+	Evidence string
+	// PromptID is the human prompt the answer came from. Each prompt answers
+	// at most one decision.
+	PromptID string
+}
+
+// ErrAnswerPromptReused refuses a chat answer whose human prompt already
+// answered another decision.
+var ErrAnswerPromptReused = errors.New("human prompt already answered another decision")
+
+// answerWriteError maps the unique index on answer_prompt_id to
+// ErrAnswerPromptReused. Any other failure keeps op as its context.
+func answerWriteError(op string, err error) error {
+	if strings.Contains(err.Error(), "UNIQUE constraint failed: decisions.answer_prompt_id") {
+		return fmt.Errorf("%w: %v", ErrAnswerPromptReused, err)
+	}
+	return fmt.Errorf("%s: %w", op, err)
+}
+
+// AnswerDecision performs a conditional transition from open.
+// WHERE status = 'open' ensures only one concurrent answer succeeds.
+// The application must enforce this at the database boundary because humans can answer twice in separate tabs.
+func (s *Store) AnswerDecision(ctx context.Context, in AnswerInput) (domain.Decision, error) {
+	return s.AnswerDecisionWith(ctx, in, AnswerSource{})
+}
+
+// AnswerDecisionWith is AnswerDecision that also records the answer's source.
+func (s *Store) AnswerDecisionWith(ctx context.Context, in AnswerInput, src AnswerSource) (domain.Decision, error) {
+	return s.answerDecision(ctx, in, src, "decision.answered")
+}
+
+func (s *Store) answerDecision(ctx context.Context, in AnswerInput, src AnswerSource, eventName string) (domain.Decision, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("begin decision answer tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := decisionQueries(s).WithTx(tx)
+	res, err := q.AnswerDecision(ctx, sqlcgen.AnswerDecisionParams{
+		AnswerLabel:    in.AnswerLabel,
+		AnswerText:     in.AnswerText,
+		AnsweredAt:     sql.NullString{String: now, Valid: true},
+		AnsweredVia:    src.Via,
+		AnswerQuote:    src.Quote,
+		AnswerEvidence: src.Evidence,
+		AnswerPromptID: src.PromptID,
+		ID:             in.DecisionID,
+	})
+	if err != nil {
+		return domain.Decision{}, answerWriteError("update decision", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return domain.Decision{}, fmt.Errorf("%w: %d", ErrDecisionNotOpen, in.DecisionID)
+	}
+	row, err := q.GetDecision(ctx, in.DecisionID)
+	if err != nil {
+		return domain.Decision{}, err
+	}
+	d, err := decisionFromRow(decisionRowFromSQLC(row))
+	if err != nil {
+		return domain.Decision{}, err
+	}
+	event, err := workflowDecisionEvent(eventName, row)
+	if err != nil {
+		return domain.Decision{}, fmt.Errorf("build decision answer event: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Decision{}, fmt.Errorf("commit decision answer: %w", err)
+	}
+	s.notify.publish(in.DecisionID)
+	s.notify.publishAll()
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return d, nil
+}
+
+// ApplyExpiredDefaults settles open decisions whose default timeout has elapsed.
+// The selection and conditional update happen in one transaction so a human answer
+// that wins the open-to-answered transition cannot be overwritten by a default.
+func (s *Store) ApplyExpiredDefaults(ctx context.Context, now time.Time) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	q := decisionQueries(s).WithTx(tx)
+	rows, err := q.ListExpiredDecisions(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("query expired decisions: %w", err)
+	}
+
+	allCandidates, err := convertDecisionRows(rows, decisionRowFromSQLC)
+	if err != nil {
+		return 0, err
+	}
+
+	var candidates []domain.Decision
+	for _, d := range allCandidates {
+		if d.DefaultAfterMs != nil && !now.Before(d.CreatedAt.Add(time.Duration(*d.DefaultAfterMs)*time.Millisecond)) {
+			candidates = append(candidates, d)
+		}
+	}
+
+	settledAt := now.UTC()
+	settledAtText := settledAt.Format(time.RFC3339)
+	var settledDecisions []domain.Decision
+	var settledEvents []DecisionEvent
+	for i := range candidates {
+		result, err := q.ApplyDecisionDefault(ctx, sqlcgen.ApplyDecisionDefaultParams{
+			AnswerLabel:      candidates[i].DefaultOption,
+			AnsweredAt:       sql.NullString{String: settledAtText, Valid: true},
+			DefaultAppliedAt: sql.NullString{String: settledAtText, Valid: true},
+			ID:               candidates[i].ID,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("apply default: %w", err)
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("default rows affected: %w", err)
+		}
+		if updated == 0 {
+			continue
+		}
+		candidates[i].Status = domain.DecisionAnswered
+		candidates[i].AnswerLabel = candidates[i].DefaultOption
+		answeredAt := settledAt
+		candidates[i].AnsweredAt = &answeredAt
+		defaultAppliedAt := settledAt
+		candidates[i].DefaultAppliedAt = &defaultAppliedAt
+		settledDecisions = append(settledDecisions, candidates[i])
+		event := DecisionEvent{Name: "decision.answered", Data: candidates[i], OccurredAt: settledAt}
+		settledEvents = append(settledEvents, event)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+
+	for _, d := range settledDecisions {
+		s.notify.publish(d.ID)
+	}
+	s.publishWorkflowEvents(settledEvents)
+	if len(settledDecisions) > 0 {
+		s.notify.publishAll()
+	}
+	return len(settledDecisions), nil
+}
+
+func (s *Store) WithdrawDecision(ctx context.Context, decisionID int64, reason string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin decision withdrawal tx: %w", err)
+	}
+	defer tx.Rollback()
+	q := decisionQueries(s).WithTx(tx)
+	if err := withdrawDecisionWith(ctx, q, decisionID, reason); err != nil {
+		return err
+	}
+	row, err := q.GetDecision(ctx, decisionID)
+	if err != nil {
+		return err
+	}
+	event, err := workflowDecisionEvent("decision.withdrawn", row)
+	if err != nil {
+		return fmt.Errorf("build decision withdrawal event: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit decision withdrawal: %w", err)
+	}
+	s.notify.publish(decisionID)
+	s.notify.publishAll()
+	s.publishWorkflowEvents([]DecisionEvent{event})
+	return nil
+}
+
+func withdrawDecisionWith(ctx context.Context, q *sqlcgen.Queries, decisionID int64, reason string) error {
+	res, err := q.WithdrawDecision(ctx, sqlcgen.WithdrawDecisionParams{
+		AnswerText: reason,
+		ID:         decisionID,
+	})
+	if err != nil {
+		return fmt.Errorf("withdraw decision: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %d", ErrDecisionNotOpen, decisionID)
+	}
+	return nil
+}
+
+// PollDecisions returns answered Decisions and transitions them to applied in one transaction.
+// "Human answered" and "agent received" are distinct facts.
+// A decision becomes applied when returned; if the process dies before return, it remains answered and the next poll can recover it.
+func (s *Store) PollDecisions(ctx context.Context, agentSessionID int64, decisionID int64) ([]domain.Decision, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	q := decisionQueries(s).WithTx(tx)
+	var out []domain.Decision
+	var conversionErr error
+	if decisionID == 0 {
+		rows, queryErr := q.ListAnsweredDecisionsForAgentSession(ctx, agentSessionID)
+		if queryErr != nil {
+			return nil, fmt.Errorf("query answered decisions: %w", queryErr)
+		}
+		out, conversionErr = convertDecisionRows(rows, decisionRowFromSQLC)
+	} else {
+		rows, queryErr := q.ListAnsweredDecisionForID(ctx, decisionID)
+		if queryErr != nil {
+			return nil, fmt.Errorf("query answered decisions: %w", queryErr)
+		}
+		out, conversionErr = convertDecisionRows(rows, decisionRowFromSQLC)
+	}
+	if conversionErr != nil {
+		return nil, conversionErr
+	}
+
+	now := time.Now().UTC()
+	var appliedEvents []DecisionEvent
+	for i := range out {
+		if err := q.MarkDecisionApplied(ctx, sqlcgen.MarkDecisionAppliedParams{
+			AppliedAt: sql.NullString{String: now.Format(time.RFC3339), Valid: true},
+			ID:        out[i].ID,
+		}); err != nil {
+			return nil, fmt.Errorf("mark applied: %w", err)
+		}
+		out[i].Status = domain.DecisionApplied
+		applied := now
+		out[i].AppliedAt = &applied
+		event := DecisionEvent{Name: "decision.applied", Data: out[i], OccurredAt: now}
+		appliedEvents = append(appliedEvents, event)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	for _, d := range out {
+		s.notify.publish(d.ID)
+	}
+	s.publishWorkflowEvents(appliedEvents)
+	if len(out) > 0 {
+		s.notify.publishAll()
+	}
+	return out, nil
+}
+
+// ListUnappliedDecisions returns answered Decisions not yet received by an agent.
+// This is the only place to detect an answer stranded after a dead session.
+func (s *Store) ListUnappliedDecisions(ctx context.Context) ([]domain.Decision, error) {
+	rows, err := decisionQueries(s).ListUnappliedDecisions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("query unapplied decisions: %w", err)
+	}
+	return convertDecisionRows(rows, decisionRowFromSQLC)
+}
+
+// ListUnappliedDecisionsForProject returns answered Decisions not yet received by an agent
+// for Goals belonging to the given project.
+func (s *Store) ListUnappliedDecisionsForProject(ctx context.Context, projectID int64) ([]domain.Decision, error) {
+	rows, err := decisionQueries(s).ListUnappliedDecisionsForProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("query project unapplied decisions: %w", err)
+	}
+	return convertDecisionRows(rows, decisionRowFromSQLC)
+}
+
+// ListUnappliedDecisionsForGoal returns answered Decisions not yet received by an agent
+// for the given Goal.
+func (s *Store) ListUnappliedDecisionsForGoal(ctx context.Context, goalID int64) ([]domain.Decision, error) {
+	rows, err := decisionQueries(s).ListUnappliedDecisionsForGoal(ctx, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("query goal unapplied decisions: %w", err)
+	}
+	return convertDecisionRows(rows, decisionRowFromSQLC)
+}
+
+// AppliedDecisionHistoryLimit is the maximum number of applied Decisions returned.
+const AppliedDecisionHistoryLimit = 20
+
+// ListAppliedDecisions returns the most recent applied Decisions for a goal
+// and the exact number omitted by the history limit.
+func (s *Store) ListAppliedDecisions(ctx context.Context, goalID int64) ([]domain.Decision, int, error) {
+	totalCount, err := decisionQueries(s).CountAppliedDecisions(ctx, goalID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count applied decisions: %w", err)
+	}
+	total := int(totalCount)
+
+	rows, err := decisionQueries(s).ListAppliedDecisions(ctx, sqlcgen.ListAppliedDecisionsParams{
+		GoalID:       goalID,
+		HistoryLimit: int64(AppliedDecisionHistoryLimit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("query applied decisions: %w", err)
+	}
+
+	limit := min(total, AppliedDecisionHistoryLimit)
+	out, err := convertDecisionRows(rows, decisionRowFromSQLC)
+	if err != nil {
+		return nil, 0, err
+	}
+	if out == nil {
+		out = make([]domain.Decision, 0, limit)
+	}
+
+	omitted := total - len(out)
+	if omitted < 0 {
+		omitted = 0
+	}
+	return out, omitted, nil
+}
+
+// ListAppliedDecisionsForTask returns the most recent applied Decisions for a task
+// and the exact number omitted by the history limit.
+func (s *Store) ListAppliedDecisionsForTask(ctx context.Context, goalID, taskID int64) ([]domain.Decision, int, error) {
+	totalCount, err := decisionQueries(s).CountAppliedDecisionsForTask(ctx, sqlcgen.CountAppliedDecisionsForTaskParams{
+		GoalID: goalID,
+		TaskID: sql.NullInt64{Int64: taskID, Valid: true},
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("count applied decisions for task: %w", err)
+	}
+	total := int(totalCount)
+
+	rows, err := decisionQueries(s).ListAppliedDecisionsForTask(ctx, sqlcgen.ListAppliedDecisionsForTaskParams{
+		GoalID:       goalID,
+		TaskID:       sql.NullInt64{Int64: taskID, Valid: true},
+		HistoryLimit: int64(AppliedDecisionHistoryLimit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("query applied decisions for task: %w", err)
+	}
+
+	limit := min(total, AppliedDecisionHistoryLimit)
+	out, err := convertDecisionRows(rows, decisionRowFromSQLC)
+	if err != nil {
+		return nil, 0, err
+	}
+	if out == nil {
+		out = make([]domain.Decision, 0, limit)
+	}
+
+	omitted := total - len(out)
+	if omitted < 0 {
+		omitted = 0
+	}
+	return out, omitted, nil
+}
